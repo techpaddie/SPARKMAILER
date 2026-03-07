@@ -1,0 +1,56 @@
+import 'dotenv/config';
+import express from 'express';
+import cors from 'cors';
+import helmet from 'helmet';
+import cookieParser from 'cookie-parser';
+import rateLimit from 'express-rate-limit';
+import { env } from './config';
+import authRoutes from './modules/auth/auth.routes';
+import adminRoutes from './modules/admin/admin.routes';
+import campaignsRoutes from './modules/campaigns/campaigns.routes';
+import listsRoutes from './modules/lists/lists.routes';
+import supportRoutes from './modules/support/support.routes';
+import templatesRoutes from './modules/templates/templates.routes';
+import smtpRoutes from './modules/smtp/smtp.routes';
+import dashboardRoutes from './modules/dashboard/dashboard.routes';
+import unsubscribeRoutes from './modules/unsubscribe/unsubscribe.routes';
+import { mailgunBounceWebhook } from './modules/webhooks/webhooks.controller';
+
+const app = express();
+
+app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
+app.use(cors({ origin: env.CORS_ORIGIN, credentials: true }));
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true }));
+app.use(cookieParser());
+
+app.use(
+  rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 200,
+    message: { error: 'Too many requests' },
+  })
+);
+
+app.get('/health', (_, res) => res.json({ status: 'ok' }));
+
+app.use('/api/auth', authRoutes);
+app.use('/api/admin', adminRoutes);
+app.use('/api/campaigns', campaignsRoutes);
+app.use('/api/lists', listsRoutes);
+app.use('/api/support', supportRoutes);
+app.use('/api/templates', templatesRoutes);
+app.use('/api/smtp-servers', smtpRoutes);
+app.use('/api/dashboard', dashboardRoutes);
+app.use('/unsubscribe', unsubscribeRoutes);
+app.post('/webhooks/mailgun/bounce', mailgunBounceWebhook);
+app.post('/webhooks/mailgun/events', mailgunBounceWebhook);
+
+app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  console.error(err);
+  res.status(500).json({ error: 'Internal server error' });
+});
+
+app.listen(env.PORT, () => {
+  console.log(`[API] Server running on port ${env.PORT}`);
+});

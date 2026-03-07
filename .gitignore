@@ -1,0 +1,24 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+backend/dist/
+*.tsbuildinfo
+
+# Environment and secrets
+.env
+.env.local
+.env.*.local
+
+# IDE / editor
+.cursor/
+.vscode/
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Vite
+frontend/dist/
