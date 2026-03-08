@@ -2,6 +2,7 @@ import { Response } from 'express';
 import { z } from 'zod';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+import type { LicenseStatus } from '@prisma/client';
 import { prisma } from '../../utils/prisma';
 import { licenseService } from '../../services/license.service';
 import { env } from '../../config';
@@ -150,7 +151,7 @@ export async function updateLicense(req: AuthenticatedRequest, res: Response) {
     expiresAt?: Date;
     maxEmailsPerDay?: number;
     maxCampaignsPerDay?: number;
-    status?: string;
+    status?: LicenseStatus;
     assignedEmail?: string | null;
     allowedIps?: string[];
     notes?: string | null;
@@ -158,7 +159,7 @@ export async function updateLicense(req: AuthenticatedRequest, res: Response) {
   if (parsed.data.expiresAt !== undefined) data.expiresAt = parsed.data.expiresAt;
   if (parsed.data.maxEmailsPerDay !== undefined) data.maxEmailsPerDay = parsed.data.maxEmailsPerDay;
   if (parsed.data.maxCampaignsPerDay !== undefined) data.maxCampaignsPerDay = parsed.data.maxCampaignsPerDay;
-  if (parsed.data.status !== undefined) data.status = parsed.data.status;
+  if (parsed.data.status !== undefined) data.status = parsed.data.status as LicenseStatus;
   if (parsed.data.assignedEmail !== undefined) data.assignedEmail = parsed.data.assignedEmail;
   if (parsed.data.allowedIps !== undefined) data.allowedIps = parsed.data.allowedIps;
   if (parsed.data.notes !== undefined) data.notes = parsed.data.notes;

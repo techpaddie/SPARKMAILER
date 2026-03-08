@@ -324,7 +324,7 @@ export async function updateCampaign(req: AuthenticatedRequest, res: Response) {
     return;
   }
 
-  const data: { name?: string; subject?: string; metadata?: unknown } = {};
+  const data: { name?: string; subject?: string; metadata?: Record<string, unknown> } = {};
   if (parsed.data.name !== undefined) data.name = parsed.data.name;
   if (parsed.data.subject !== undefined) data.subject = parsed.data.subject;
 
@@ -339,7 +339,7 @@ export async function updateCampaign(req: AuthenticatedRequest, res: Response) {
 
   const updated = await prisma.campaign.update({
     where: { id },
-    data,
+    data: data as { name?: string; subject?: string; metadata?: object },
   });
 
   res.json(updated);

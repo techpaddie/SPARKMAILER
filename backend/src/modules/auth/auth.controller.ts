@@ -120,7 +120,7 @@ export async function activate(req: Request, res: Response) {
       type: 'access',
     },
     env.JWT_SECRET,
-    { expiresIn: env.JWT_ACCESS_EXPIRY }
+    { expiresIn: env.JWT_ACCESS_EXPIRY } as jwt.SignOptions
   );
 
   const refreshToken = jwt.sign(
@@ -129,7 +129,7 @@ export async function activate(req: Request, res: Response) {
       type: 'refresh',
     },
     env.JWT_REFRESH_SECRET,
-    { expiresIn: env.JWT_REFRESH_EXPIRY }
+    { expiresIn: env.JWT_REFRESH_EXPIRY } as jwt.SignOptions
   );
 
   res.json({
@@ -189,13 +189,13 @@ export async function login(req: Request, res: Response) {
         type: 'access',
       },
       env.JWT_SECRET,
-      { expiresIn: env.JWT_ACCESS_EXPIRY }
+      { expiresIn: env.JWT_ACCESS_EXPIRY } as jwt.SignOptions
     );
 
     const refreshToken = jwt.sign(
       { userId: user.id, type: 'refresh' },
       env.JWT_REFRESH_SECRET,
-      { expiresIn: env.JWT_REFRESH_EXPIRY }
+      { expiresIn: env.JWT_REFRESH_EXPIRY } as jwt.SignOptions
     );
 
     res.json({
@@ -250,7 +250,7 @@ export async function refresh(req: Request, res: Response) {
         type: 'access',
       },
       env.JWT_SECRET,
-      { expiresIn: env.JWT_ACCESS_EXPIRY }
+      { expiresIn: env.JWT_ACCESS_EXPIRY } as jwt.SignOptions
     );
 
     res.json({
