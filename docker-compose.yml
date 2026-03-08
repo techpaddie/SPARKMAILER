@@ -29,6 +29,8 @@ services:
       NODE_ENV: production
       DATABASE_URL: postgresql://spark:spark@postgres:5432/sparkmailer
       REDIS_URL: redis://redis:6379
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY}
       SEND_RATE_PER_SECOND: ${SEND_RATE_PER_SECOND:-10}
     depends_on:
