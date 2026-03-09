@@ -120,7 +120,7 @@ export default function SupportPage() {
       const { data } = await api.get('/support/tickets');
       return data;
     },
-    { refetchInterval: 5000 }
+    { refetchInterval: 5_000, refetchOnWindowFocus: true }
   );
 
   const { data: selectedTicket, isLoading: ticketLoading } = useQuery<TicketDetail>(
@@ -129,7 +129,7 @@ export default function SupportPage() {
       const { data } = await api.get(`/support/tickets/${selectedTicketId}`);
       return data;
     },
-    { enabled: !!selectedTicketId, refetchInterval: selectedTicketId ? 3000 : false }
+    { enabled: !!selectedTicketId, refetchInterval: selectedTicketId ? 3_000 : false, refetchOnWindowFocus: true }
   );
 
   useEffect(() => {
@@ -137,6 +137,13 @@ export default function SupportPage() {
       setSelectedTicketId(tickets[0]!.id);
     }
   }, [tickets, selectedTicketId]);
+
+  // When user views a ticket, update sidebar menu badge so it stays in sync
+  useEffect(() => {
+    if (selectedTicketId) {
+      queryClient.invalidateQueries({ queryKey: ['support-tickets-badge'] });
+    }
+  }, [selectedTicketId, queryClient]);
 
   const createTicket = useMutation(
     async () => {
@@ -157,7 +164,8 @@ export default function SupportPage() {
         setMessage('');
         setNewAttachments([]);
         setFormError('');
-        queryClient.invalidateQueries(['support-tickets']);
+        queryClient.invalidateQueries({ queryKey: ['support-tickets'] });
+        queryClient.invalidateQueries({ queryKey: ['support-tickets-badge'] });
         queryClient.setQueryData(['support-ticket', ticket.id], ticket);
         setSelectedTicketId(ticket.id);
       },
@@ -180,7 +188,8 @@ export default function SupportPage() {
       onSuccess: (ticket) => {
         setReply('');
         setReplyAttachments([]);
-        queryClient.invalidateQueries(['support-tickets']);
+        queryClient.invalidateQueries({ queryKey: ['support-tickets'] });
+        queryClient.invalidateQueries({ queryKey: ['support-tickets-badge'] });
         queryClient.setQueryData(['support-ticket', ticket.id], ticket);
       },
     }
@@ -193,7 +202,8 @@ export default function SupportPage() {
     },
     {
       onSuccess: (ticket) => {
-        queryClient.invalidateQueries(['support-tickets']);
+        queryClient.invalidateQueries({ queryKey: ['support-tickets'] });
+        queryClient.invalidateQueries({ queryKey: ['support-tickets-badge'] });
         queryClient.setQueryData(['support-ticket', ticket.id], ticket);
       },
     }
@@ -205,7 +215,8 @@ export default function SupportPage() {
     },
     {
       onSuccess: (_, ticketId) => {
-        queryClient.invalidateQueries(['support-tickets']);
+        queryClient.invalidateQueries({ queryKey: ['support-tickets'] });
+        queryClient.invalidateQueries({ queryKey: ['support-tickets-badge'] });
         if (selectedTicketId === ticketId) setSelectedTicketId(null);
       },
     }
@@ -263,7 +274,7 @@ export default function SupportPage() {
   }
 
   return (
-    <div className="p-8">
+    <div className="p-4 sm:p-6 lg:p-8">
       <div className="max-w-7xl mx-auto">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
           <div>

@@ -122,7 +122,7 @@ export default function AdminSupportPage() {
       });
       return data;
     },
-    { refetchInterval: 5000 }
+    { refetchInterval: 4_000, refetchOnWindowFocus: true }
   );
 
   const { data: selectedTicket, isLoading: ticketLoading } = useQuery<AdminTicketDetail>(
@@ -131,7 +131,7 @@ export default function AdminSupportPage() {
       const { data } = await api.get(`/admin/support/tickets/${selectedTicketId}`);
       return data;
     },
-    { enabled: !!selectedTicketId, refetchInterval: selectedTicketId ? 3000 : false }
+    { enabled: !!selectedTicketId, refetchInterval: selectedTicketId ? 2_500 : false, refetchOnWindowFocus: true }
   );
 
   useEffect(() => {
@@ -142,8 +142,16 @@ export default function AdminSupportPage() {
     if (selectedTicket) {
       setStatusValue(selectedTicket.status);
       setPriorityValue(selectedTicket.priority);
+      // Keep list cache in sync so status (e.g. OPEN → IN_PROGRESS) updates immediately in the ticket list
+      queryClient.setQueriesData(
+        { queryKey: ['admin-support-tickets'] },
+        (old: AdminTicketSummary[] | undefined) =>
+          old?.map((t) => (t.id === selectedTicket.id ? { ...t, status: selectedTicket.status } : t))
+      );
+      // Update main sidebar menu badge so it reflects current counts
+      queryClient.invalidateQueries({ queryKey: ['admin-support-tickets-badge'] });
     }
-  }, [selectedTicket]);
+  }, [selectedTicket, queryClient]);
 
   const replyMutation = useMutation(
     async (ticketId: string) => {
@@ -159,7 +167,8 @@ export default function AdminSupportPage() {
         setReply('');
         setReplyAttachments([]);
         setPageError('');
-        queryClient.invalidateQueries(['admin-support-tickets']);
+        queryClient.invalidateQueries({ queryKey: ['admin-support-tickets'] });
+        queryClient.invalidateQueries({ queryKey: ['admin-support-tickets-badge'] });
         queryClient.setQueryData(['admin-support-ticket', ticket.id], ticket);
       },
       onError: (err: { response?: { data?: { error?: string } } }) => {
@@ -180,7 +189,8 @@ export default function AdminSupportPage() {
     {
       onSuccess: (ticket) => {
         setStatusValue(ticket.status);
-        queryClient.invalidateQueries(['admin-support-tickets']);
+        queryClient.invalidateQueries({ queryKey: ['admin-support-tickets'] });
+        queryClient.invalidateQueries({ queryKey: ['admin-support-tickets-badge'] });
         queryClient.setQueryData(['admin-support-ticket', ticket.id], ticket);
       },
     }
@@ -192,7 +202,8 @@ export default function AdminSupportPage() {
     },
     {
       onSuccess: (_, ticketId) => {
-        queryClient.invalidateQueries(['admin-support-tickets']);
+        queryClient.invalidateQueries({ queryKey: ['admin-support-tickets'] });
+        queryClient.invalidateQueries({ queryKey: ['admin-support-tickets-badge'] });
         if (selectedTicketId === ticketId) setSelectedTicketId(null);
       },
     }
@@ -243,7 +254,7 @@ export default function AdminSupportPage() {
   }
 
   return (
-    <div className="p-8">
+    <div className="p-4 sm:p-6 lg:p-8">
       <div className="max-w-7xl mx-auto">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
           <div>

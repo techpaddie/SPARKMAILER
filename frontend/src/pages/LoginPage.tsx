@@ -32,10 +32,12 @@ export default function LoginPage() {
     <div className="min-h-screen flex items-center justify-center bg-black px-4 bg-grid-subtle bg-grid">
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
-          <div className="flex items-center justify-center gap-3 mb-2">
-            <img src="/logo.png" alt="" className="h-10 w-auto object-contain" aria-hidden />
-            <h1 className="tactical-heading text-3xl text-primary-400">SparkMailer</h1>
-          </div>
+          <Link to="/" className="inline-block focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 focus-visible:ring-offset-black rounded">
+            <div className="flex items-center justify-center gap-3 mb-2">
+              <img src="/logo.png" alt="" className="h-10 w-auto object-contain" aria-hidden />
+              <h1 className="tactical-heading text-3xl text-primary-400">SparkMailer</h1>
+            </div>
+          </Link>
           <p className="tactical-label mt-2 normal-case">SMTP + API Bulk Email Sender</p>
         </div>
         <form

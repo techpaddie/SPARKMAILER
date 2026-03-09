@@ -1,6 +1,8 @@
 import { Outlet, NavLink, useNavigate } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { useAuthStore } from '../context/authStore';
 import SidebarNavLink from '../components/SidebarNavLink';
+import { api } from '../services/api';
 
 const navItems = [
   { to: '/admin', label: 'Overview', icon: 'dashboard' },
@@ -9,6 +11,7 @@ const navItems = [
   { to: '/admin/licenses', label: 'Licenses', icon: 'vpn_key' },
   { to: '/admin/usage', label: 'Usage analytics', icon: 'bar_chart' },
   { to: '/admin/support', label: 'Support', icon: 'support_agent' },
+  { to: '/admin/settings', label: 'Settings', icon: 'settings' },
 ];
 
 export default function AdminLayout() {
@@ -21,6 +24,13 @@ export default function AdminLayout() {
     logout('admin');
     navigate('/admin/login', { replace: true });
   };
+
+  const { data: adminTickets = [] } = useQuery<{ id: string; status: string }[]>(
+    ['admin-support-tickets-badge'],
+    () => api.get('/admin/support/tickets').then((r) => r.data),
+    { refetchInterval: 8_000, refetchOnWindowFocus: true }
+  );
+  const adminOpenTicketCount = adminTickets.filter((t) => t.status !== 'CLOSED' && t.status !== 'RESOLVED').length;
 
   return (
     <div className="min-h-screen flex bg-black">
@@ -44,6 +54,7 @@ export default function AdminLayout() {
               end={item.to === '/admin'}
               activeClass="bg-amber-500/10 text-amber-400 border-l-2 border-amber-500"
               inactiveClass="text-neutral-500 hover:bg-white/[0.04] hover:text-neutral-200 border-l-2 border-transparent"
+              badge={item.to === '/admin/support' ? adminOpenTicketCount || null : undefined}
             />
           ))}
         </nav>

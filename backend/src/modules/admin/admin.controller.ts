@@ -4,7 +4,9 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import type { LicenseStatus } from '@prisma/client';
 import { prisma } from '../../utils/prisma';
+import { encrypt } from '../../utils/crypto';
 import { licenseService } from '../../services/license.service';
+import { sendNewUserLicenseEmail, sendSystemEmail } from '../../services/notification.service';
 import { env } from '../../config';
 import type { AuthenticatedRequest } from '../../middleware/types';
 
@@ -87,6 +89,15 @@ export async function createUser(req: AuthenticatedRequest, res: Response) {
       createdBy: req.user!.id,
     });
 
+    const emailResult = await sendNewUserLicenseEmail({
+      toEmail: normalizedEmail,
+      recipientName: name || null,
+      licenseKey: license.licenseKey,
+      expiresAt: license.expiresAt,
+      maxEmailsPerDay: license.maxEmailsPerDay,
+      maxCampaignsPerDay: license.maxCampaignsPerDay,
+    });
+
     res.status(201).json({
       licenseKey: license.licenseKey,
       email: normalizedEmail,
@@ -94,7 +105,11 @@ export async function createUser(req: AuthenticatedRequest, res: Response) {
       expiresAt: license.expiresAt,
       maxEmailsPerDay: license.maxEmailsPerDay,
       maxCampaignsPerDay: license.maxCampaignsPerDay,
-      message: 'Share the license key with the user. They must sign up at /activate using this key and the assigned email.',
+      emailSent: emailResult.sent,
+      emailError: emailResult.sent ? undefined : emailResult.error,
+      message: emailResult.sent
+        ? 'User created. A license email was sent to the user with activation instructions.'
+        : 'Share the license key with the user. They must sign up at /activate using this key and the assigned email.',
     });
   } catch (err) {
     console.error('[Admin] createUser error:', err);
@@ -353,5 +368,210 @@ export async function impersonateUser(req: AuthenticatedRequest, res: Response) 
   } catch (err) {
     console.error('[Admin] impersonateUser error:', err);
     res.status(500).json({ error: 'Impersonation failed' });
+  }
+}
+
+// ----- System SMTP (notifications / license emails) -----
+
+export async function getSystemSmtp(req: AuthenticatedRequest, res: Response) {
+  const config = await prisma.systemSmtpConfig.findFirst({
+    where: { isActive: true },
+  });
+  if (!config) {
+    res.json({ configured: false, config: null });
+    return;
+  }
+  res.json({
+    configured: true,
+    config: {
+      id: config.id,
+      host: config.host,
+      port: config.port,
+      secure: config.secure,
+      username: config.username,
+      fromEmail: config.fromEmail,
+      fromName: config.fromName,
+      isActive: config.isActive,
+    },
+  });
+}
+
+const systemSmtpSchema = z.object({
+  host: z.string().min(1, 'Host is required'),
+  port: z.coerce.number().min(1).max(65535),
+  secure: z.boolean().optional(),
+  username: z.string().min(1, 'Username is required'),
+  password: z.string().optional(), // optional on update (keep existing if not provided)
+  fromEmail: z.string().email('Valid from-email is required'),
+  fromName: z.string().optional(),
+  isActive: z.boolean().optional(),
+});
+
+export async function updateSystemSmtp(req: AuthenticatedRequest, res: Response) {
+  try {
+    const parsed = systemSmtpSchema.safeParse(req.body);
+    if (!parsed.success) {
+      const msg = formatZodError(parsed.error);
+      res.status(400).json({ error: msg });
+      return;
+    }
+
+    const data = parsed.data;
+    const isNew = data.password !== undefined && data.password !== '';
+
+    const payload: {
+      host: string;
+      port: number;
+      secure: boolean;
+      username: string;
+      passwordEnc?: string;
+      fromEmail: string;
+      fromName: string | null;
+      isActive: boolean;
+    } = {
+      host: data.host,
+      port: data.port,
+      secure: data.secure ?? false,
+      username: data.username,
+      fromEmail: data.fromEmail,
+      fromName: data.fromName ?? null,
+      isActive: data.isActive ?? true,
+    };
+
+    if (isNew) {
+      payload.passwordEnc = encrypt(data.password!);
+    }
+
+    const existing = await prisma.systemSmtpConfig.findFirst();
+    if (existing) {
+      if (!isNew) {
+        delete (payload as { passwordEnc?: string }).passwordEnc;
+      }
+      const updated = await prisma.systemSmtpConfig.update({
+        where: { id: existing.id },
+        data: payload,
+      });
+      res.json({
+        configured: true,
+        config: {
+          id: updated.id,
+          host: updated.host,
+          port: updated.port,
+          secure: updated.secure,
+          username: updated.username,
+          fromEmail: updated.fromEmail,
+          fromName: updated.fromName,
+          isActive: updated.isActive,
+        },
+      });
+      return;
+    }
+
+    if (!isNew) {
+      res.status(400).json({ error: 'Password is required when creating system SMTP config' });
+      return;
+    }
+
+    const created = await prisma.systemSmtpConfig.create({
+      data: {
+        ...payload,
+        passwordEnc: payload.passwordEnc!,
+      },
+    });
+    res.status(201).json({
+      configured: true,
+      config: {
+        id: created.id,
+        host: created.host,
+        port: created.port,
+        secure: created.secure,
+        username: created.username,
+        fromEmail: created.fromEmail,
+        fromName: created.fromName,
+        isActive: created.isActive,
+      },
+    });
+  } catch (err) {
+    console.error('[Admin] updateSystemSmtp error:', err);
+    const message =
+      err && typeof err === 'object' && 'code' in err && (err as { code?: string }).code === 'P2021'
+        ? 'Database schema may be out of date. Run: npx prisma db push'
+        : 'Failed to save system SMTP configuration';
+    res.status(500).json({ error: message });
+  }
+}
+
+// ----- Notify User (system email with HTML + attachments) -----
+
+const MAX_ATTACHMENTS = 10;
+const MAX_ATTACHMENT_SIZE_BYTES = 8 * 1024 * 1024; // 8MB per file
+
+const notifyUserSchema = z.object({
+  toEmail: z.string().email('Valid recipient email is required'),
+  subject: z.string().min(1, 'Subject is required').max(500),
+  html: z.string().min(1, 'Message body is required'),
+  text: z.string().optional(),
+  attachments: z
+    .array(
+      z.object({
+        filename: z.string().min(1),
+        content: z.string().min(1), // base64
+        contentType: z.string().optional(),
+      })
+    )
+    .max(MAX_ATTACHMENTS, `Maximum ${MAX_ATTACHMENTS} attachments`)
+    .optional(),
+});
+
+export async function notifyUser(req: AuthenticatedRequest, res: Response) {
+  try {
+    const parsed = notifyUserSchema.safeParse(req.body);
+    if (!parsed.success) {
+      const msg = formatZodError(parsed.error);
+      res.status(400).json({ error: msg });
+      return;
+    }
+
+    const { toEmail, subject, html, text, attachments: rawAttachments } = parsed.data;
+
+    const attachments: { filename: string; content: Buffer; contentType?: string }[] = [];
+    if (rawAttachments?.length) {
+      for (const a of rawAttachments) {
+        let buf: Buffer;
+        try {
+          buf = Buffer.from(a.content, 'base64');
+        } catch {
+          res.status(400).json({ error: 'Invalid attachment content (must be base64)' });
+          return;
+        }
+        if (buf.length > MAX_ATTACHMENT_SIZE_BYTES) {
+          res.status(400).json({ error: `Attachment "${a.filename}" exceeds 8MB limit` });
+          return;
+        }
+        attachments.push({
+          filename: a.filename,
+          content: buf,
+          contentType: a.contentType,
+        });
+      }
+    }
+
+    const result = await sendSystemEmail({
+      toEmail: toEmail.trim().toLowerCase(),
+      subject: subject.trim(),
+      html,
+      text: text?.trim() || undefined,
+      attachments: attachments.length ? attachments : undefined,
+    });
+
+    if (!result.sent) {
+      res.status(502).json({ error: result.error || 'Failed to send email' });
+      return;
+    }
+
+    res.json({ success: true, message: 'Email sent' });
+  } catch (err) {
+    console.error('[Admin] notifyUser error:', err);
+    res.status(500).json({ error: 'Failed to send notification email' });
   }
 }

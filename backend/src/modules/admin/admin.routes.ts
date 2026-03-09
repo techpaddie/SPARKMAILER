@@ -28,4 +28,9 @@ router.post('/users/:id/activate', adminController.activateUser);
 router.post('/users/:id/impersonate', adminController.impersonateUser);
 router.post('/users/:id/reset-password', adminController.resetUserPassword);
 
+router.get('/settings/smtp', adminController.getSystemSmtp);
+router.put('/settings/smtp', adminController.updateSystemSmtp);
+
+router.post('/notify-user', adminController.notifyUser);
+
 export default router;

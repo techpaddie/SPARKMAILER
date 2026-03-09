@@ -19,6 +19,8 @@ const envSchema = z.object({
   BATCH_SIZE: z.string().transform(Number).default('200'),
   SEND_RATE_PER_SECOND: z.string().transform(Number).default('10'),
   SKIP_QUOTA_CHECK: z.string().optional().transform((v) => v === '1' || v === 'true'),
+  // Admin email for new support ticket notifications
+  ADMIN_NOTIFICATION_EMAIL: z.string().email().optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;

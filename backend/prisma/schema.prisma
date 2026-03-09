@@ -219,6 +219,20 @@ model SmtpServer {
   @@index([healthScore])
 }
 
+// System SMTP for notifications (license emails, etc.) - configured in admin Settings
+model SystemSmtpConfig {
+  id          String   @id @default(uuid())
+  host        String
+  port        Int      @default(587)
+  secure      Boolean  @default(false)
+  username    String
+  passwordEnc String
+  fromEmail   String
+  fromName    String?
+  isActive    Boolean  @default(true)
+  updatedAt   DateTime @updatedAt
+}
+
 // ============================================
 // TEMPLATES
 // ============================================

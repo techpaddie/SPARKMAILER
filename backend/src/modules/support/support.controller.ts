@@ -2,6 +2,7 @@ import { Response } from 'express';
 import { z } from 'zod';
 import { prisma } from '../../utils/prisma';
 import type { AuthenticatedRequest } from '../../middleware/types';
+import { sendNewTicketAdminNotification } from '../../services/notification.service';
 
 const attachmentSchema = z.object({
   name: z.string().trim().min(1).max(180),
@@ -204,6 +205,16 @@ export async function createTicket(req: AuthenticatedRequest, res: Response) {
       },
     },
   });
+
+  sendNewTicketAdminNotification({
+    ticketId: ticket.id,
+    subject,
+    userEmail: req.user!.email,
+    userName: req.user!.name ?? null,
+    messagePreview: content.message,
+    category: category || null,
+    priority: priority ?? 'MEDIUM',
+  }).catch((err) => console.error('[Support] sendNewTicketAdminNotification failed:', err));
 
   res.status(201).json(toTicketDetail(ticket));
 }

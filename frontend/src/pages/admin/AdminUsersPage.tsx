@@ -20,6 +20,13 @@ export default function AdminUsersPage() {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [resetError, setResetError] = useState('');
 
+  const [notifyTarget, setNotifyTarget] = useState<{ id: string; email: string; name: string | null } | null>(null);
+  const [notifySubject, setNotifySubject] = useState('');
+  const [notifyHtml, setNotifyHtml] = useState('');
+  const [notifyAttachments, setNotifyAttachments] = useState<{ file: File; id: string }[]>([]);
+  const [notifyError, setNotifyError] = useState('');
+  const [notifySuccess, setNotifySuccess] = useState(false);
+
   const suspend = useMutation((id: string) => api.post(`/admin/users/${id}/suspend`), {
     onSuccess: () => queryClient.invalidateQueries(['admin-users']),
   });
@@ -61,6 +68,25 @@ export default function AdminUsersPage() {
     }
   );
 
+  const notifyUser = useMutation(
+    async (payload: { toEmail: string; subject: string; html: string; attachments?: { filename: string; content: string; contentType?: string }[] }) => {
+      const res = await api.post('/admin/notify-user', payload);
+      return res.data;
+    },
+    {
+      onSuccess: () => {
+        setNotifySuccess(true);
+        setNotifySubject('');
+        setNotifyHtml('');
+        setNotifyAttachments([]);
+        setNotifyError('');
+      },
+      onError: (err: { response?: { data?: { error?: string } } }) => {
+        setNotifyError(err.response?.data?.error ?? 'Failed to send email');
+      },
+    }
+  );
+
   const handleSubmitReset = () => {
     setResetError('');
     if (newPassword.length < 8) {
@@ -72,6 +98,56 @@ export default function AdminUsersPage() {
       return;
     }
     if (resetTarget) resetPassword.mutate({ id: resetTarget.id, newPassword });
+  };
+
+  const readFileAsBase64 = (file: File): Promise<string> =>
+    new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = reader.result as string;
+        const base64 = result.includes(',') ? result.split(',')[1] : result;
+        resolve(base64 ?? '');
+      };
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(file);
+    });
+
+  const handleNotifySubmit = async () => {
+    if (!notifyTarget) return;
+    setNotifyError('');
+    if (!notifySubject.trim()) {
+      setNotifyError('Subject is required');
+      return;
+    }
+    if (!notifyHtml.trim()) {
+      setNotifyError('Message body is required');
+      return;
+    }
+    let attachments: { filename: string; content: string; contentType?: string }[] | undefined;
+    if (notifyAttachments.length > 0) {
+      try {
+        attachments = await Promise.all(
+          notifyAttachments.map(async ({ file }) => ({
+            filename: file.name,
+            content: await readFileAsBase64(file),
+            contentType: file.type || undefined,
+          }))
+        );
+      } catch (e) {
+        setNotifyError('Failed to read attachment files');
+        return;
+      }
+    }
+    notifyUser.mutate({
+      toEmail: notifyTarget.email,
+      subject: notifySubject.trim(),
+      html: notifyHtml.trim(),
+      attachments,
+    });
+  };
+
+  const removeNotifyAttachment = (id: string) => {
+    setNotifyAttachments((prev) => prev.filter((a) => a.id !== id));
   };
 
   return (
@@ -171,6 +247,20 @@ export default function AdminUsersPage() {
                             Reset password
                           </button>
                           <span className="text-neutral-600">|</span>
+                          <button
+                            onClick={() => {
+                              setNotifyTarget({ id: u.id, email: u.email, name: u.name });
+                              setNotifySubject('');
+                              setNotifyHtml('');
+                              setNotifyAttachments([]);
+                              setNotifyError('');
+                              setNotifySuccess(false);
+                            }}
+                            className="text-sm text-primary-400 hover:text-primary-300 font-medium"
+                          >
+                            Notify
+                          </button>
+                          <span className="text-neutral-600">|</span>
                           {u.status === 'ACTIVE' ? (
                             <button
                               onClick={() => suspend.mutate(u.id)}
@@ -243,6 +333,117 @@ export default function AdminUsersPage() {
                 {resetPassword.isLoading ? 'Saving…' : 'Update password'}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {notifyTarget && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 overflow-y-auto"
+          onClick={() => {
+            if (!notifyUser.isLoading) {
+              setNotifyTarget(null);
+              setNotifySuccess(false);
+            }
+          }}
+        >
+          <div
+            className="tactical-card rounded-lg w-full max-w-2xl p-6 my-8"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="font-heading text-lg font-semibold text-neutral-100 mb-1 tracking-tight flex items-center gap-2">
+              <Icon name="mail" size={22} className="text-primary-500/80" />
+              Notify user
+            </h3>
+            <p className="text-neutral-500 text-sm mb-4 font-sans">Send an email to {notifyTarget.email} using the system SMTP server.</p>
+
+            {notifySuccess ? (
+              <div className="py-4">
+                <p className="text-primary-400 font-medium flex items-center gap-2">
+                  <Icon name="check_circle" size={20} /> Email sent successfully.
+                </p>
+                <div className="flex justify-end mt-4">
+                  <button onClick={() => setNotifyTarget(null)} className="tactical-btn-primary rounded text-sm">
+                    Close
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <div className="space-y-4">
+                  <div>
+                    <label className="tactical-label mb-1.5 normal-case text-neutral-400">To</label>
+                    <input type="text" value={notifyTarget.email} readOnly className="tactical-input bg-white/5" />
+                  </div>
+                  <div>
+                    <label className="tactical-label mb-1.5 normal-case text-neutral-400">Subject</label>
+                    <input
+                      type="text"
+                      value={notifySubject}
+                      onChange={(e) => setNotifySubject(e.target.value)}
+                      className="tactical-input"
+                      placeholder="Email subject"
+                    />
+                  </div>
+                  <div>
+                    <label className="tactical-label mb-1.5 normal-case text-neutral-400">Message (HTML supported)</label>
+                    <textarea
+                      value={notifyHtml}
+                      onChange={(e) => setNotifyHtml(e.target.value)}
+                      className="tactical-input min-h-[200px] font-mono text-sm"
+                      placeholder="<p>Hello,</p><p>You can use HTML here.</p>"
+                      rows={10}
+                    />
+                    <p className="text-xs text-neutral-500 mt-1">Use HTML tags for formatting (e.g. &lt;p&gt;, &lt;strong&gt;, &lt;a href="..."&gt;).</p>
+                  </div>
+                  <div>
+                    <label className="tactical-label mb-1.5 normal-case text-neutral-400">Attachments (max 10 files, 8MB each)</label>
+                    <input
+                      type="file"
+                      multiple
+                      className="block w-full text-sm text-neutral-400 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:bg-primary-500/20 file:text-primary-400 file:font-medium"
+                      onChange={(e) => {
+                        const files = Array.from(e.target.files ?? []);
+                        setNotifyAttachments((prev) => [
+                          ...prev,
+                          ...files.map((file) => ({ file, id: `${file.name}-${Date.now()}-${Math.random()}` })),
+                        ]);
+                        e.target.value = '';
+                      }}
+                    />
+                    {notifyAttachments.length > 0 && (
+                      <ul className="mt-2 space-y-1">
+                        {notifyAttachments.map(({ file, id }) => (
+                          <li key={id} className="flex items-center justify-between text-sm text-neutral-400">
+                            <span className="truncate">{file.name}</span>
+                            <button type="button" onClick={() => removeNotifyAttachment(id)} className="text-red-400 hover:text-red-300 ml-2">
+                              Remove
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                </div>
+                {notifyError && <p className="text-red-400 text-sm mt-3 font-medium">{notifyError}</p>}
+                <div className="flex justify-end gap-2 mt-6">
+                  <button
+                    onClick={() => setNotifyTarget(null)}
+                    disabled={notifyUser.isLoading}
+                    className="tactical-btn-ghost rounded text-sm"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleNotifySubmit}
+                    disabled={notifyUser.isLoading || !notifySubject.trim() || !notifyHtml.trim()}
+                    className="tactical-btn-primary rounded text-sm disabled:opacity-50"
+                  >
+                    {notifyUser.isLoading ? 'Sending…' : 'Send email'}
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}

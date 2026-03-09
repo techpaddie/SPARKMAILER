@@ -1,8 +1,10 @@
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { useAuthStore } from '../context/authStore';
 import SidebarNavLink from '../components/SidebarNavLink';
 import Icon from '../components/Icon';
 import { ADMIN_IMPERSONATION_RESTORE_KEY } from '../constants';
+import { api } from '../services/api';
 
 function getImpersonationRestore(): { accessToken: string; user: { id: string; email: string; name?: string; role: string; licenseId?: string | null } } | null {
   try {
@@ -14,7 +16,7 @@ function getImpersonationRestore(): { accessToken: string; user: { id: string; e
   }
 }
 
-const navItems = [
+const navItems: { to: string; label: string; icon: string }[] = [
   { to: '/', label: 'Overview', icon: 'dashboard' },
   { to: '/campaigns', label: 'Campaigns', icon: 'campaign' },
   { to: '/leads', label: 'Leads', icon: 'groups' },
@@ -51,6 +53,14 @@ export default function DashboardLayout() {
   const profileActive = location.pathname === '/profile';
   const initials = user?.name?.trim()?.slice(0, 1) || user?.email?.slice(0, 1) || '?';
 
+  const { data: supportTickets = [] } = useQuery<{ id: string; status: string; latestMessage?: { authorType: string } | null }[]>(
+    ['support-tickets-badge'],
+    () => api.get('/support/tickets').then((r) => r.data),
+    { refetchInterval: 8_000, refetchOnWindowFocus: true }
+  );
+  const supportOpenCount = supportTickets.filter((t) => t.status !== 'CLOSED' && t.status !== 'RESOLVED').length;
+  const supportNewReplyCount = supportTickets.filter((t) => t.latestMessage?.authorType === 'ADMIN').length;
+
   return (
     <div className="min-h-screen flex flex-col bg-black">
       {restore && (
@@ -71,7 +81,14 @@ export default function DashboardLayout() {
           </div>
           <nav className="flex-1 px-2 py-4 space-y-0.5">
             {navItems.map((item) => (
-              <SidebarNavLink key={item.to} to={item.to} label={item.label} icon={item.icon} end={item.to === '/'} />
+              <SidebarNavLink
+                key={item.to}
+                to={item.to}
+                label={item.label}
+                icon={item.icon}
+                end={item.to === '/'}
+                badge={item.to === '/support' ? (supportNewReplyCount > 0 ? supportNewReplyCount : supportOpenCount) || null : undefined}
+              />
             ))}
           </nav>
           <div className="p-2 border-t border-white/[0.08]">

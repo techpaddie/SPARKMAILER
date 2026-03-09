@@ -16,6 +16,7 @@ export default function AdminCreateUserPage() {
   });
   const [notes, setNotes] = useState('');
   const [createdLicenseKey, setCreatedLicenseKey] = useState<string | null>(null);
+  const [createResult, setCreateResult] = useState<{ emailSent?: boolean; emailError?: string } | null>(null);
   const queryClient = useQueryClient();
 
   const createUser = useMutation(
@@ -33,6 +34,7 @@ export default function AdminCreateUserPage() {
     {
       onSuccess: (res) => {
         setCreatedLicenseKey(res.data.licenseKey);
+        setCreateResult({ emailSent: res.data.emailSent, emailError: res.data.emailError });
         queryClient.invalidateQueries(['admin-licenses']);
       },
     }
@@ -48,6 +50,7 @@ export default function AdminCreateUserPage() {
     setEmail('');
     setName('');
     setCreatedLicenseKey(null);
+    setCreateResult(null);
     createUser.reset();
   };
 
@@ -72,8 +75,13 @@ export default function AdminCreateUserPage() {
               <Icon name="check_circle" size={22} className="text-primary-500/80" /> License key created
             </h2>
             <p className="text-neutral-500 text-sm mb-4 font-sans">
-              Share this license key with the user. They must go to the activation page and sign up using this key and the assigned email address.
+              {createResult?.emailSent
+                ? 'An email with the license and activation instructions was sent to the user.'
+                : 'Share this license key with the user. They must go to the activation page and sign up using this key and the assigned email address.'}
             </p>
+            {createResult?.emailSent === false && createResult?.emailError && (
+              <p className="text-amber-500/90 text-sm mb-4 font-sans">Email could not be sent: {createResult.emailError}. Configure system SMTP in Admin → Settings.</p>
+            )}
             <div className="rounded-lg bg-surface-700 border border-white/5 p-4 mb-4">
               <p className="tactical-label text-neutral-500 normal-case mb-1">License key</p>
               <p className="font-mono text-lg text-neutral-100 break-all">{createdLicenseKey}</p>

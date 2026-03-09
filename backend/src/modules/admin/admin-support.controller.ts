@@ -2,6 +2,7 @@ import { Response } from 'express';
 import { z } from 'zod';
 import { prisma } from '../../utils/prisma';
 import type { AuthenticatedRequest } from '../../middleware/types';
+import { sendTicketReplyToUser } from '../../services/notification.service';
 
 const attachmentSchema = z.object({
   name: z.string().trim().min(1).max(180),
@@ -136,7 +137,7 @@ export async function listSupportTickets(req: AuthenticatedRequest, res: Respons
 }
 
 export async function getSupportTicket(req: AuthenticatedRequest, res: Response) {
-  const ticket = await prisma.supportTicket.findUnique({
+  let ticket = await prisma.supportTicket.findUnique({
     where: { id: req.params.id },
     include: {
       user: { select: { id: true, email: true, name: true } },
@@ -158,6 +159,32 @@ export async function getSupportTicket(req: AuthenticatedRequest, res: Response)
   if (!ticket) {
     res.status(404).json({ error: 'Support ticket not found' });
     return;
+  }
+
+  // When admin opens an OPEN ticket, move to IN_PROGRESS immediately
+  if (ticket.status === 'OPEN') {
+    await prisma.supportTicket.update({
+      where: { id: ticket.id },
+      data: { status: 'IN_PROGRESS' },
+    });
+    ticket = await prisma.supportTicket.findUnique({
+      where: { id: req.params.id },
+      include: {
+        user: { select: { id: true, email: true, name: true } },
+        messages: {
+          orderBy: { createdAt: 'asc' },
+          select: {
+            id: true,
+            authorType: true,
+            authorEmail: true,
+            authorName: true,
+            body: true,
+            attachments: true,
+            createdAt: true,
+          },
+        },
+      },
+    })!;
   }
 
   res.json(toAdminTicketDetail(ticket));
@@ -217,6 +244,14 @@ export async function replyToSupportTicket(req: AuthenticatedRequest, res: Respo
       },
     },
   });
+
+  sendTicketReplyToUser({
+    toEmail: updated.user.email,
+    userName: updated.user.name ?? null,
+    ticketSubject: updated.subject,
+    ticketId: updated.id,
+    replyPreview: content.message,
+  }).catch((err) => console.error('[AdminSupport] sendTicketReplyToUser failed:', err));
 
   res.json(toAdminTicketDetail(updated));
 }

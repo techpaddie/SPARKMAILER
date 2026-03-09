@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { Link } from 'react-router-dom';
 import {
   ResponsiveContainer,
   BarChart,
@@ -43,6 +44,7 @@ function LiveTimestamp() {
 
 type MeResponse = { name?: string; email?: string; quota?: { emailsUsed: number; maxEmailsPerDay: number; campaignsUsed: number; maxCampaignsPerDay: number }; license?: { status?: string; expiresAt?: string } };
 type CampaignItem = { id: string; name: string; status: string; sentCount: number; totalRecipients: number };
+type SupportTicketSummary = { id: string; subject: string; status: string; lastMessageAt: string; latestMessage?: { authorType: string } | null };
 
 export default function DashboardPage() {
   const { data: me } = useQuery<MeResponse>(['me'], async () => {
@@ -54,6 +56,14 @@ export default function DashboardPage() {
     const { data } = await api.get('/campaigns');
     return data;
   });
+
+  const { data: supportTickets = [] } = useQuery<SupportTicketSummary[]>(
+    ['support-tickets'],
+    () => api.get('/support/tickets').then((r) => r.data),
+    { refetchInterval: 8_000, refetchOnWindowFocus: true }
+  );
+  const ticketsWithNewReply = supportTickets.filter((t) => t.latestMessage?.authorType === 'ADMIN');
+  const openTickets = supportTickets.filter((t) => t.status !== 'CLOSED' && t.status !== 'RESOLVED');
 
   const recent = campaigns.slice(0, 5);
   const chartData = recent.map((c: { name: string; sentCount: number }) => ({
@@ -186,6 +196,39 @@ export default function DashboardPage() {
             )}
           </div>
         </div>
+
+        {(ticketsWithNewReply.length > 0 || openTickets.length > 0) && (
+          <div className="tactical-card rounded-lg p-6 mt-8 border-l-4 border-l-primary-500/50">
+            <h2 className="font-heading font-semibold text-lg text-neutral-100 mb-4 flex items-center gap-2 tracking-tight">
+              <Icon name="support_agent" size={22} className="text-primary-500/80" /> Support ticket updates
+            </h2>
+            {ticketsWithNewReply.length > 0 && (
+              <p className="text-primary-400 text-sm font-medium mb-2">
+                You have {ticketsWithNewReply.length} ticket{ticketsWithNewReply.length !== 1 ? 's' : ''} with new replies.
+              </p>
+            )}
+            <ul className="space-y-2 mb-4">
+              {openTickets.slice(0, 5).map((t) => (
+                <li key={t.id}>
+                  <Link
+                    to="/support"
+                    className="flex items-center justify-between py-2 px-3 rounded-lg hover:bg-white/[0.04] transition-colors"
+                  >
+                    <span className="text-neutral-200 truncate">{t.subject}</span>
+                    {t.latestMessage?.authorType === 'ADMIN' ? (
+                      <span className="text-primary-400 text-xs font-medium shrink-0 ml-2">New reply</span>
+                    ) : (
+                      <span className="text-neutral-500 text-xs shrink-0 ml-2">{t.status.replace(/_/g, ' ')}</span>
+                    )}
+                  </Link>
+                </li>
+              ))}
+            </ul>
+            <Link to="/support" className="tactical-btn-ghost rounded text-sm inline-flex items-center gap-2">
+              <Icon name="open_in_new" size={16} /> View all support tickets
+            </Link>
+          </div>
+        )}
       </div>
     </div>
   );

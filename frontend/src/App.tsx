@@ -21,6 +21,7 @@ import AdminUsersPage from './pages/admin/AdminUsersPage';
 import AdminSupportPage from './pages/admin/AdminSupportPage';
 import AdminLicensesPage from './pages/admin/AdminLicensesPage';
 import AdminUsagePage from './pages/admin/AdminUsagePage';
+import AdminSettingsPage from './pages/admin/AdminSettingsPage';
 import HomePage from './pages/HomePage';
 import ContactPage from './pages/ContactPage';
 
@@ -122,6 +123,7 @@ export default function App() {
           <Route path="support" element={<AdminSupportPage />} />
           <Route path="licenses" element={<AdminLicensesPage />} />
           <Route path="usage" element={<AdminUsagePage />} />
+          <Route path="settings" element={<AdminSettingsPage />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
