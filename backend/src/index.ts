@@ -18,8 +18,25 @@ import { mailgunBounceWebhook } from './modules/webhooks/webhooks.controller';
 
 const app = express();
 
-app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
-app.use(cors({ origin: env.CORS_ORIGIN, credentials: true }));
+app.use(
+  helmet({
+    crossOriginResourcePolicy: { policy: 'cross-origin' },
+    crossOriginOpenerPolicy: false,
+    originAgentCluster: false,
+  })
+);
+
+const allowedOrigins = env.CORS_ORIGIN.split(',').map((s) => s.trim()).filter(Boolean);
+app.use(
+  cors({
+    origin: (origin, cb) => {
+      if (!origin) return cb(null, true);
+      if (allowedOrigins.includes(origin)) return cb(null, origin);
+      cb(null, false);
+    },
+    credentials: true,
+  })
+);
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
