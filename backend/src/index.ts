@@ -18,6 +18,10 @@ import { mailgunBounceWebhook } from './modules/webhooks/webhooks.controller';
 
 const app = express();
 
+if (env.TRUST_PROXY !== false) {
+  app.set('trust proxy', env.TRUST_PROXY);
+}
+
 app.use(
   helmet({
     crossOriginResourcePolicy: { policy: 'cross-origin' },

@@ -14,6 +14,8 @@ services:
       JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY}
       CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost}
+      # Reverse proxy (nginx/Hostinger): 1 = one hop; increase if behind Cloudflare + local nginx, etc.
+      TRUST_PROXY: ${TRUST_PROXY:-1}
     depends_on:
       postgres:
         condition: service_healthy

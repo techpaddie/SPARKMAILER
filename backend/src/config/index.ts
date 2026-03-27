@@ -11,6 +11,20 @@ const envSchema = z.object({
   JWT_REFRESH_EXPIRY: z.string().default('7d'),
   ENCRYPTION_KEY: z.string().length(64, 'ENCRYPTION_KEY must be 32 bytes hex'),
   CORS_ORIGIN: z.string().default('http://localhost:5173'),
+  // When behind nginx/Cloudflare/etc., set to 1 (or number of proxy hops) so Express and express-rate-limit
+  // honor X-Forwarded-For. Unset or "0" for local direct access without a reverse proxy.
+  TRUST_PROXY: z
+    .string()
+    .optional()
+    .transform((v): false | number => {
+      if (v == null || String(v).trim() === '') return false;
+      const s = String(v).trim().toLowerCase();
+      if (s === 'false' || s === '0' || s === 'no' || s === 'off') return false;
+      if (s === 'true' || s === '1' || s === 'yes' || s === 'on') return 1;
+      const n = Number.parseInt(String(v), 10);
+      if (!Number.isNaN(n) && n >= 1) return n;
+      return 1;
+    }),
   // Public base URL used in email links (unsubscribe, etc). Example: https://app.example.com
   PUBLIC_BASE_URL: z.string().optional(),
   MAILGUN_API_KEY: z.string().optional(),
