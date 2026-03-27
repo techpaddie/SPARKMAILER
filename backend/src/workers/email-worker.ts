@@ -4,6 +4,7 @@ import nodemailer from 'nodemailer';
 import { env } from '../config';
 import { prisma } from '../utils/prisma';
 import { smtpRotationService, type SmtpConfig } from '../services/smtp-rotation.service';
+import { acquireSmtpMinuteSlot } from '../services/smtp-send-throttle.service';
 import type { EmailJobData } from '../queue/email.queue';
 import { QUEUE_NAMES } from '../config/constants';
 import { licenseService } from '../services/license.service';
@@ -17,22 +18,13 @@ const connection = {
 
 const BATCH_DELAY_MS = 1000 / (env.SEND_RATE_PER_SECOND || 10);
 
-let smtpCache: { userId: string; configs: SmtpConfig[] } | null = null;
-
 function domainOf(email: string): string {
   const at = email.lastIndexOf('@');
   return at >= 0 ? email.slice(at + 1).toLowerCase() : '';
 }
 
 async function getSmtpForJob(userId: string, desiredFromEmail?: string): Promise<SmtpConfig | null> {
-  if (smtpCache?.userId !== userId) {
-    smtpCache = {
-      userId,
-      configs: await smtpRotationService.getActiveSmtpForUser(userId),
-    };
-  }
-
-  const all = smtpCache!.configs;
+  const all = await smtpRotationService.getActiveSmtpForUser(userId);
   if (!desiredFromEmail) return smtpRotationService.selectSmtp(all);
 
   const exact = all.filter((c) => c.fromEmail.toLowerCase() === desiredFromEmail.toLowerCase());
@@ -91,6 +83,8 @@ async function processEmailJob(job: Job<EmailJobData>) {
   if (!smtp) {
     throw new Error('No healthy SMTP server available');
   }
+
+  await acquireSmtpMinuteSlot(smtp.id, smtp.maxSendsPerMinute);
 
   const transporter = nodemailer.createTransport({
     host: smtp.host,
@@ -198,6 +192,10 @@ async function processEmailJob(job: Job<EmailJobData>) {
     const user = await prisma.user.findUnique({ where: { id: userId } });
     if (user?.licenseId) {
       await licenseService.incrementEmailUsage(userId, user.licenseId, 1);
+    }
+
+    if (smtp.sendDelayMs > 0) {
+      await new Promise((r) => setTimeout(r, smtp.sendDelayMs));
     }
 
     return { success: true, messageId: info.messageId };

@@ -34,6 +34,8 @@ export default function AdminLicensesPage() {
     notes: '' as string | null,
   });
   const [editError, setEditError] = useState('');
+  const [deleteTarget, setDeleteTarget] = useState<License | null>(null);
+  const [deleteError, setDeleteError] = useState('');
 
   const { data: licenses = [], isLoading } = useQuery(
     ['admin-licenses'],
@@ -51,6 +53,20 @@ export default function AdminLicensesPage() {
       },
       onError: (err: { response?: { data?: { error?: string } } }) => {
         setEditError(err.response?.data?.error ?? 'Failed to update license');
+      },
+    }
+  );
+
+  const deleteLicense = useMutation(
+    (id: string) => api.delete(`/admin/licenses/${id}`),
+    {
+      onSuccess: () => {
+        queryClient.invalidateQueries(['admin-licenses']);
+        setDeleteTarget(null);
+        setDeleteError('');
+      },
+      onError: (err: { response?: { data?: { error?: string } } }) => {
+        setDeleteError(err.response?.data?.error ?? 'Failed to delete license');
       },
     }
   );
@@ -191,9 +207,9 @@ export default function AdminLicensesPage() {
                   <col style={{ width: '32%' }} />
                   <col style={{ width: '12%' }} />
                   <col style={{ width: '12%' }} />
-                  <col style={{ width: '18%' }} />
-                  <col style={{ width: '18%' }} />
-                  <col style={{ width: '8%' }} />
+                  <col style={{ width: '16%' }} />
+                  <col style={{ width: '16%' }} />
+                  <col style={{ width: '14%' }} />
                 </colgroup>
                 <thead className="sticky top-0 z-10 bg-surface-900/95 backdrop-blur-sm border-b border-white/[0.08]">
                   <tr>
@@ -263,13 +279,25 @@ export default function AdminLicensesPage() {
                           )}
                         </td>
                         <td className="py-4 px-4 align-top whitespace-nowrap">
-                          <button
-                            type="button"
-                            onClick={() => openEdit(l)}
-                            className="inline-flex items-center gap-1 px-2 py-1.5 text-sm text-primary-400 hover:text-primary-300 hover:bg-white/[0.05] rounded transition-colors"
-                          >
-                            <Icon name="edit" size={16} /> Edit
-                          </button>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => openEdit(l)}
+                              className="inline-flex items-center gap-1 px-2 py-1.5 text-sm text-primary-400 hover:text-primary-300 hover:bg-white/[0.05] rounded transition-colors"
+                            >
+                              <Icon name="edit" size={16} /> Edit
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setDeleteError('');
+                                setDeleteTarget(l);
+                              }}
+                              className="inline-flex items-center gap-1 px-2 py-1.5 text-sm text-red-400 hover:text-red-300 hover:bg-white/[0.05] rounded transition-colors"
+                            >
+                              <Icon name="delete" size={16} /> Delete
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     );
@@ -282,6 +310,40 @@ export default function AdminLicensesPage() {
             <div className="p-12 text-center text-neutral-500 font-medium">No licenses match the selected filter.</div>
           )}
         </div>
+
+        {deleteTarget && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
+            onClick={() => !deleteLicense.isLoading && setDeleteTarget(null)}
+          >
+            <div className="tactical-card rounded-lg w-full max-w-md p-6" onClick={(e) => e.stopPropagation()}>
+              <h2 className="font-heading text-lg font-semibold text-neutral-100 tracking-tight">Delete license permanently?</h2>
+              <p className="text-neutral-500 text-sm mt-2 font-sans">
+                This removes the license record and unlinks any user accounts that were tied to it. Users keep their accounts but lose license association. This cannot be undone.
+              </p>
+              <p className="font-mono text-sm text-neutral-300 mt-3 break-all">{deleteTarget.licenseKey}</p>
+              {deleteError && <p className="text-red-400 text-sm mt-3 font-medium">{deleteError}</p>}
+              <div className="flex gap-2 mt-6">
+                <button
+                  type="button"
+                  disabled={deleteLicense.isLoading}
+                  onClick={() => setDeleteTarget(null)}
+                  className="tactical-btn-ghost rounded text-sm disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={deleteLicense.isLoading}
+                  onClick={() => deleteLicense.mutate(deleteTarget.id)}
+                  className="rounded text-sm px-4 py-2 bg-red-600/90 hover:bg-red-600 text-white font-medium disabled:opacity-50"
+                >
+                  {deleteLicense.isLoading ? 'Deleting…' : 'Delete license'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {editingLicense && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4" onClick={() => setEditingLicense(null)}>

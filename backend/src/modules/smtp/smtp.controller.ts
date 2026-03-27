@@ -17,11 +17,28 @@ const createSchema = z.object({
   password: z.string().min(1),
   fromEmail: z.string().email(),
   fromName: z.string().optional(),
+  weight: z.coerce.number().int().min(1).max(1000).optional(),
+  sendDelayMs: z.coerce.number().int().min(0).max(120_000).optional(),
+  maxSendsPerMinute: z.coerce.number().int().min(0).max(10_000).optional(),
 });
 
 const updateSchema = createSchema.partial();
 
-function toPublic(server: { id: string; name: string; host: string; port: number; secure: boolean; username: string; fromEmail: string; fromName: string | null; isActive: boolean; healthScore: number }) {
+function toPublic(server: {
+  id: string;
+  name: string;
+  host: string;
+  port: number;
+  secure: boolean;
+  username: string;
+  fromEmail: string;
+  fromName: string | null;
+  isActive: boolean;
+  healthScore: number;
+  weight: number;
+  sendDelayMs: number;
+  maxSendsPerMinute: number;
+}) {
   return {
     id: server.id,
     name: server.name,
@@ -33,6 +50,9 @@ function toPublic(server: { id: string; name: string; host: string; port: number
     fromName: server.fromName,
     isActive: server.isActive,
     healthScore: server.healthScore,
+    weight: server.weight,
+    sendDelayMs: server.sendDelayMs,
+    maxSendsPerMinute: server.maxSendsPerMinute,
   };
 }
 
@@ -74,6 +94,9 @@ export async function create(req: AuthenticatedRequest, res: Response) {
       passwordEnc,
       fromEmail: parsed.data.fromEmail,
       fromName: parsed.data.fromName ?? null,
+      weight: parsed.data.weight ?? 10,
+      sendDelayMs: parsed.data.sendDelayMs ?? 0,
+      maxSendsPerMinute: parsed.data.maxSendsPerMinute ?? 0,
     },
   });
   res.status(201).json(toPublic(server));
@@ -94,20 +117,46 @@ export async function update(req: AuthenticatedRequest, res: Response) {
     return;
   }
   const { password, ...rest } = parsed.data;
-  const updateData: { name?: string; host?: string; port?: number; secure?: boolean; username?: string; fromEmail?: string; fromName?: string | null; passwordEnc?: string } = { ...rest };
+  const updateData: {
+    name?: string;
+    host?: string;
+    port?: number;
+    secure?: boolean;
+    username?: string;
+    fromEmail?: string;
+    fromName?: string | null;
+    weight?: number;
+    sendDelayMs?: number;
+    maxSendsPerMinute?: number;
+    passwordEnc?: string;
+  } = { ...rest };
   if (password) {
     updateData.passwordEnc = encrypt(password);
   }
+  const connectionTouched =
+    password !== undefined ||
+    rest.host !== undefined ||
+    rest.port !== undefined ||
+    rest.username !== undefined ||
+    rest.secure !== undefined ||
+    rest.fromEmail !== undefined ||
+    rest.fromName !== undefined ||
+    rest.name !== undefined;
+
   const server = await prisma.smtpServer.update({
     where: { id },
     data: {
       ...updateData,
-      isActive: true,
-      healthScore: 100,
-      failureCount: 0,
-      bounceCount: 0,
-      avgResponseMs: 0,
-      lastHealthAt: new Date(),
+      ...(connectionTouched
+        ? {
+            isActive: true,
+            healthScore: 100,
+            failureCount: 0,
+            bounceCount: 0,
+            avgResponseMs: 0,
+            lastHealthAt: new Date(),
+          }
+        : {}),
     },
   });
   res.json(toPublic(server));

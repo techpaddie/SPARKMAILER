@@ -12,6 +12,8 @@ export interface SmtpConfig {
   fromName: string | null;
   healthScore: number;
   weight: number;
+  sendDelayMs: number;
+  maxSendsPerMinute: number;
 }
 
 const HEALTH_THRESHOLD = 30;
@@ -26,18 +28,24 @@ export const smtpRotationService = {
 
     return servers
       .filter((s) => s.healthScore >= HEALTH_THRESHOLD)
-      .map((s) => ({
-        id: s.id,
-        host: s.host,
-        port: s.port,
-        secure: s.secure,
-        username: s.username,
-        password: decrypt(s.passwordEnc),
-        fromEmail: s.fromEmail,
-        fromName: s.fromName,
-        healthScore: s.healthScore,
-        weight: Math.max(MIN_WEIGHT, Math.round(s.healthScore / 10)),
-      }));
+      .map((s) => {
+        const baseWeight = Math.max(MIN_WEIGHT, s.weight);
+        const healthFactor = Math.max(0, Math.min(100, s.healthScore)) / 100;
+        return {
+          id: s.id,
+          host: s.host,
+          port: s.port,
+          secure: s.secure,
+          username: s.username,
+          password: decrypt(s.passwordEnc),
+          fromEmail: s.fromEmail,
+          fromName: s.fromName,
+          healthScore: s.healthScore,
+          weight: Math.max(MIN_WEIGHT, Math.round(baseWeight * healthFactor)),
+          sendDelayMs: s.sendDelayMs ?? 0,
+          maxSendsPerMinute: s.maxSendsPerMinute ?? 0,
+        };
+      });
   },
 
   /**

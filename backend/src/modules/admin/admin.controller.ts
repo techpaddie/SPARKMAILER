@@ -2,7 +2,7 @@ import { Response } from 'express';
 import { z } from 'zod';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-import type { LicenseStatus } from '@prisma/client';
+import { Prisma, type LicenseStatus } from '@prisma/client';
 import { prisma } from '../../utils/prisma';
 import { encrypt } from '../../utils/crypto';
 import { licenseService } from '../../services/license.service';
@@ -76,7 +76,10 @@ export async function createUser(req: AuthenticatedRequest, res: Response) {
       },
     });
     if (existingLicense) {
-      res.status(400).json({ error: 'An active license already exists for this email' });
+      res.status(400).json({
+        error:
+          'An active license already exists for this email. Open Admin → Licenses to copy the key, or revoke that license before generating a new one.',
+      });
       return;
     }
 
@@ -113,17 +116,14 @@ export async function createUser(req: AuthenticatedRequest, res: Response) {
     });
   } catch (err) {
     console.error('[Admin] createUser error:', err);
-    let message = 'Failed to create user';
-    if (err instanceof Error) {
-      message = err.message;
-      if (err.name === 'PrismaClientKnownRequestError') {
-        const prismaErr = err as { code?: string };
-        if (prismaErr.code === 'P2002') message = 'A license with this email already exists';
-        else if (prismaErr.code === 'P2021') message = 'Database schema may be outdated. Run: npx prisma db push';
-      } else if (message.includes('Unknown arg') || message.includes('assignedEmail')) {
-        message = 'Database schema outdated. Run: npx prisma db push';
-      }
+    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+      res.status(400).json({
+        error:
+          'A license for this email already exists. Open Admin → Licenses to copy the key, or revoke the license before creating another.',
+      });
+      return;
     }
+    const message = err instanceof Error ? err.message : 'Failed to create user';
     res.status(500).json({ error: message });
   }
 }
@@ -145,6 +145,17 @@ export async function createLicense(req: AuthenticatedRequest, res: Response) {
 export async function revokeLicense(req: AuthenticatedRequest, res: Response) {
   const { id } = req.params;
   await licenseService.revoke(id);
+  res.json({ success: true });
+}
+
+export async function deleteLicense(req: AuthenticatedRequest, res: Response) {
+  const { id } = req.params;
+  const existing = await prisma.license.findUnique({ where: { id } });
+  if (!existing) {
+    res.status(404).json({ error: 'License not found' });
+    return;
+  }
+  await licenseService.deleteById(id);
   res.json({ success: true });
 }
 

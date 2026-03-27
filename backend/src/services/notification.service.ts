@@ -1,7 +1,43 @@
 import nodemailer from 'nodemailer';
+import { Prisma } from '@prisma/client';
 import { prisma } from '../utils/prisma';
 import { decrypt } from '../utils/crypto';
 import { env } from '../config';
+
+async function getActiveSystemSmtpConfig(): Promise<
+  | { ok: true; config: NonNullable<Awaited<ReturnType<typeof prisma.systemSmtpConfig.findFirst>>> }
+  | { ok: false; error: string }
+> {
+  try {
+    const config = await prisma.systemSmtpConfig.findFirst({
+      where: { isActive: true },
+    });
+    if (!config) {
+      return { ok: false, error: 'System SMTP not configured' };
+    }
+    return { ok: true, config };
+  } catch (err) {
+    console.error('[Notification] systemSmtpConfig lookup failed:', err);
+    if (err instanceof Prisma.PrismaClientKnownRequestError) {
+      if (err.code === 'P2021') {
+        return {
+          ok: false,
+          error:
+            'The SystemSmtpConfig database table is missing. Run backend migrations (e.g. `npx prisma migrate deploy`) on the server, then try again.',
+        };
+      }
+      if (err.code === 'P2022') {
+        return {
+          ok: false,
+          error:
+            'The database schema is missing columns required for system email. Deploy the latest Prisma migrations, then try again.',
+        };
+      }
+    }
+    const message = err instanceof Error ? err.message : String(err);
+    return { ok: false, error: `Could not load system SMTP settings: ${message}` };
+  }
+}
 
 export type NewUserLicenseEmailParams = {
   toEmail: string;
@@ -98,13 +134,11 @@ function buildLicenseEmailText(params: NewUserLicenseEmailParams): string {
  * Returns true if sent, false if system SMTP is not configured or send failed.
  */
 export async function sendNewUserLicenseEmail(params: NewUserLicenseEmailParams): Promise<{ sent: boolean; error?: string }> {
-  const config = await prisma.systemSmtpConfig.findFirst({
-    where: { isActive: true },
-  });
-
-  if (!config) {
-    return { sent: false, error: 'System SMTP not configured' };
+  const loaded = await getActiveSystemSmtpConfig();
+  if (!loaded.ok) {
+    return { sent: false, error: loaded.error };
   }
+  const { config } = loaded;
 
   let password: string;
   try {
@@ -162,13 +196,11 @@ export type SendSystemEmailParams = {
  * Sends an arbitrary email using the system SMTP config (e.g. admin "Notify User").
  */
 export async function sendSystemEmail(params: SendSystemEmailParams): Promise<{ sent: boolean; error?: string }> {
-  const config = await prisma.systemSmtpConfig.findFirst({
-    where: { isActive: true },
-  });
-
-  if (!config) {
-    return { sent: false, error: 'System SMTP not configured' };
+  const loaded = await getActiveSystemSmtpConfig();
+  if (!loaded.ok) {
+    return { sent: false, error: loaded.error };
   }
+  const { config } = loaded;
 
   let password: string;
   try {

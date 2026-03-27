@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../services/api';
 import Icon from '../components/Icon';
@@ -15,7 +15,121 @@ type SmtpServerItem = {
   fromName: string | null;
   healthScore: number;
   isActive: boolean;
+  weight: number;
+  sendDelayMs: number;
+  maxSendsPerMinute: number;
 };
+
+function SmtpDeliveryControlsRow({
+  server,
+  statusBadge,
+  onSave,
+  isSaving,
+  saveError,
+}: {
+  server: SmtpServerItem;
+  statusBadge: ReturnType<typeof smtpStatusBadge>;
+  onSave: (data: { weight: number; sendDelayMs: number; maxSendsPerMinute: number }) => void;
+  isSaving: boolean;
+  saveError: string | null;
+}) {
+  const [weight, setWeight] = useState(String(server.weight ?? 10));
+  const [sendDelayMs, setSendDelayMs] = useState(String(server.sendDelayMs ?? 0));
+  const [maxSendsPerMinute, setMaxSendsPerMinute] = useState(String(server.maxSendsPerMinute ?? 0));
+  const [localErr, setLocalErr] = useState('');
+
+  useEffect(() => {
+    setWeight(String(server.weight ?? 10));
+    setSendDelayMs(String(server.sendDelayMs ?? 0));
+    setMaxSendsPerMinute(String(server.maxSendsPerMinute ?? 0));
+    setLocalErr('');
+  }, [server.id, server.weight, server.sendDelayMs, server.maxSendsPerMinute]);
+
+  const dirty =
+    weight !== String(server.weight ?? 10) ||
+    sendDelayMs !== String(server.sendDelayMs ?? 0) ||
+    maxSendsPerMinute !== String(server.maxSendsPerMinute ?? 0);
+
+  const trySave = () => {
+    setLocalErr('');
+    const w = parseInt(weight, 10);
+    const d = parseInt(sendDelayMs, 10);
+    const m = parseInt(maxSendsPerMinute, 10);
+    if (Number.isNaN(w) || w < 1 || w > 1000) {
+      setLocalErr('Weight: 1–1000');
+      return;
+    }
+    if (Number.isNaN(d) || d < 0 || d > 120_000) {
+      setLocalErr('Delay: 0–120000 ms');
+      return;
+    }
+    if (Number.isNaN(m) || m < 0 || m > 10_000) {
+      setLocalErr('Max/min: 0–10000 (0 = unlimited)');
+      return;
+    }
+    onSave({ weight: w, sendDelayMs: d, maxSendsPerMinute: m });
+  };
+
+  const err = localErr || saveError;
+
+  return (
+    <tr className="border-b border-white/[0.06] hover:bg-white/[0.02]">
+      <td className="py-3 px-3 align-top min-w-0">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className={`inline-flex w-2 h-2 rounded-full shrink-0 ${server.isActive && server.healthScore >= 30 ? 'bg-emerald-400' : 'bg-neutral-500'}`} />
+          <span className="font-medium text-neutral-100 truncate">{server.name}</span>
+          <span className={`text-xs px-2 py-0.5 rounded-full shrink-0 ${statusBadge.className}`}>{statusBadge.label}</span>
+        </div>
+        <p className="text-xs text-neutral-500 mt-1 font-mono truncate">{server.fromEmail}</p>
+      </td>
+      <td className="py-3 px-2 align-top whitespace-nowrap text-sm text-neutral-400">{Math.round(server.healthScore)}%</td>
+      <td className="py-3 px-2 align-top">
+        <input
+          type="number"
+          min={1}
+          max={1000}
+          value={weight}
+          onChange={(e) => setWeight(e.target.value)}
+          className="tactical-input py-1.5 text-sm w-full min-w-[4rem] max-w-[6rem]"
+          title="Relative share in rotation when healthy"
+        />
+      </td>
+      <td className="py-3 px-2 align-top">
+        <input
+          type="number"
+          min={0}
+          max={120000}
+          value={sendDelayMs}
+          onChange={(e) => setSendDelayMs(e.target.value)}
+          className="tactical-input py-1.5 text-sm w-full min-w-[4rem] max-w-[7rem]"
+          title="Extra milliseconds to wait after each successful send via this SMTP"
+        />
+      </td>
+      <td className="py-3 px-2 align-top">
+        <input
+          type="number"
+          min={0}
+          max={10000}
+          value={maxSendsPerMinute}
+          onChange={(e) => setMaxSendsPerMinute(e.target.value)}
+          className="tactical-input py-1.5 text-sm w-full min-w-[4rem] max-w-[7rem]"
+          title="0 = no limit"
+        />
+      </td>
+      <td className="py-3 px-2 align-top">
+        <button
+          type="button"
+          disabled={!dirty || isSaving}
+          onClick={trySave}
+          className="tactical-btn-primary rounded text-xs px-3 py-1.5 disabled:opacity-40 whitespace-nowrap"
+        >
+          {isSaving ? 'Saving…' : 'Save'}
+        </button>
+        {err ? <p className="text-xs text-red-400 mt-1.5 max-w-[10rem] leading-snug">{err}</p> : null}
+      </td>
+    </tr>
+  );
+}
 
 function smtpStatusBadge(server: SmtpServerItem) {
   if (server.isActive && server.healthScore >= 30) {
@@ -58,6 +172,9 @@ export default function SettingsPage() {
     password: string;
     fromEmail: string;
     fromName: string;
+    weight: string;
+    sendDelayMs: string;
+    maxSendsPerMinute: string;
   }>({
     name: '',
     host: '',
@@ -67,6 +184,9 @@ export default function SettingsPage() {
     password: '',
     fromEmail: '',
     fromName: '',
+    weight: '10',
+    sendDelayMs: '0',
+    maxSendsPerMinute: '0',
   });
   const [editingSmtpId, setEditingSmtpId] = useState<string | null>(null);
   const [smtpError, setSmtpError] = useState('');
@@ -89,7 +209,7 @@ export default function SettingsPage() {
       onSuccess: () => {
         queryClient.invalidateQueries(['smtp-servers']);
         queryClient.invalidateQueries(['dashboard-stats']);
-        setSmtpForm({ name: '', host: '', port: '587', secure: false, username: '', password: '', fromEmail: '', fromName: '' });
+        setSmtpForm({ name: '', host: '', port: '587', secure: false, username: '', password: '', fromEmail: '', fromName: '', weight: '10', sendDelayMs: '0', maxSendsPerMinute: '0' });
         setSmtpError('');
       },
       onError: (err: { response?: { data?: { error?: unknown } } }) => {
@@ -108,7 +228,7 @@ export default function SettingsPage() {
         queryClient.invalidateQueries(['smtp-servers']);
         queryClient.invalidateQueries(['dashboard-stats']);
         setEditingSmtpId(null);
-        setSmtpForm({ name: '', host: '', port: '587', secure: false, username: '', password: '', fromEmail: '', fromName: '' });
+        setSmtpForm({ name: '', host: '', port: '587', secure: false, username: '', password: '', fromEmail: '', fromName: '', weight: '10', sendDelayMs: '0', maxSendsPerMinute: '0' });
         setSmtpError('');
       },
       onError: (err: { response?: { data?: { error?: unknown } } }) => {
@@ -123,6 +243,31 @@ export default function SettingsPage() {
   const deleteSmtp = useMutation(
     (id: string) => api.delete(`/smtp-servers/${id}`),
     { onSuccess: () => { queryClient.invalidateQueries(['smtp-servers']); queryClient.invalidateQueries(['dashboard-stats']); } }
+  );
+
+  const [deliverySaveError, setDeliverySaveError] = useState<{ id: string; message: string } | null>(null);
+
+  const patchDeliverySettings = useMutation(
+    ({ id, data }: { id: string; data: { weight: number; sendDelayMs: number; maxSendsPerMinute: number } }) =>
+      api.patch(`/smtp-servers/${id}`, data),
+    {
+      onMutate: ({ id }) => {
+        setDeliverySaveError((prev) => (prev?.id === id ? null : prev));
+      },
+      onSuccess: () => {
+        queryClient.invalidateQueries(['smtp-servers']);
+        queryClient.invalidateQueries(['dashboard-stats']);
+        setDeliverySaveError(null);
+      },
+      onError: (err: { response?: { data?: { error?: unknown } } }, variables) => {
+        const raw = err.response?.data?.error;
+        const msg =
+          typeof raw === 'string'
+            ? raw
+            : 'Failed to save delivery settings';
+        setDeliverySaveError({ id: variables.id, message: msg });
+      },
+    }
   );
   const reactivateSmtp = useMutation(
     (id: string) => api.post(`/smtp-servers/${id}/reactivate`),
@@ -151,20 +296,32 @@ export default function SettingsPage() {
         username: smtpForm.username,
         fromEmail: smtpForm.fromEmail,
         fromName: smtpForm.fromName || undefined,
+        weight: Math.min(1000, Math.max(1, parseInt(smtpForm.weight, 10) || 10)),
+        sendDelayMs: Math.min(120_000, Math.max(0, parseInt(smtpForm.sendDelayMs, 10) || 0)),
+        maxSendsPerMinute: Math.min(10_000, Math.max(0, parseInt(smtpForm.maxSendsPerMinute, 10) || 0)),
       };
       if (smtpForm.password) payload.password = smtpForm.password;
       updateSmtp.mutate({ id: editingSmtpId, data: payload });
     } else {
       createSmtp.mutate({
-        ...smtpForm,
+        name: smtpForm.name,
+        host: smtpForm.host,
         port,
+        secure: smtpForm.secure,
+        username: smtpForm.username,
+        password: smtpForm.password,
+        fromEmail: smtpForm.fromEmail,
+        fromName: smtpForm.fromName || undefined,
+        weight: Math.min(1000, Math.max(1, parseInt(smtpForm.weight, 10) || 10)),
+        sendDelayMs: Math.min(120_000, Math.max(0, parseInt(smtpForm.sendDelayMs, 10) || 0)),
+        maxSendsPerMinute: Math.min(10_000, Math.max(0, parseInt(smtpForm.maxSendsPerMinute, 10) || 0)),
       });
     }
   };
 
   return (
     <div className="p-8">
-      <div className="max-w-4xl mx-auto">
+      <div className="max-w-6xl mx-auto">
         <h1 className="tactical-heading text-2xl">Settings</h1>
         <p className="tactical-label mb-6 normal-case text-neutral-500">
           Manage account, SMTP, delivery settings, and integrations.
@@ -284,6 +441,9 @@ export default function SettingsPage() {
                             password: '',
                             fromEmail: s.fromEmail,
                             fromName: s.fromName ?? '',
+                            weight: String((s as SmtpServerItem).weight ?? 10),
+                            sendDelayMs: String((s as SmtpServerItem).sendDelayMs ?? 0),
+                            maxSendsPerMinute: String((s as SmtpServerItem).maxSendsPerMinute ?? 0),
                           });
                         }}
                         className="tactical-btn-ghost rounded text-sm"
@@ -391,6 +551,46 @@ export default function SettingsPage() {
                   className="tactical-input"
                 />
               </div>
+              <div className="space-y-1.5 sm:col-span-2 rounded-lg border border-white/[0.06] p-4 bg-surface-800/30">
+                <p className="text-xs font-semibold text-neutral-300 mb-3 font-heading tracking-tight">Sending pace & rotation (also editable on Email Delivery)</p>
+                <div className="grid sm:grid-cols-3 gap-4">
+                  <div className="space-y-1.5">
+                    <label className="tactical-label normal-case text-neutral-400">Rotation weight</label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={1000}
+                      value={smtpForm.weight}
+                      onChange={(e) => setSmtpForm((f) => ({ ...f, weight: e.target.value }))}
+                      className="tactical-input"
+                      title="Higher = more often selected when healthy"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="tactical-label normal-case text-neutral-400">Delay after send (ms)</label>
+                    <input
+                      type="number"
+                      min={0}
+                      max={120000}
+                      value={smtpForm.sendDelayMs}
+                      onChange={(e) => setSmtpForm((f) => ({ ...f, sendDelayMs: e.target.value }))}
+                      className="tactical-input"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="tactical-label normal-case text-neutral-400">Max sends / minute</label>
+                    <input
+                      type="number"
+                      min={0}
+                      max={10000}
+                      value={smtpForm.maxSendsPerMinute}
+                      onChange={(e) => setSmtpForm((f) => ({ ...f, maxSendsPerMinute: e.target.value }))}
+                      className="tactical-input"
+                      title="0 = no cap (per SMTP, enforced by worker)"
+                    />
+                  </div>
+                </div>
+              </div>
             </div>
             {smtpError && <p className="text-red-400 text-sm font-medium">{smtpError}</p>}
             <div className="flex gap-2 pt-1">
@@ -416,6 +616,9 @@ export default function SettingsPage() {
                       password: '',
                       fromEmail: '',
                       fromName: '',
+                      weight: '10',
+                      sendDelayMs: '0',
+                      maxSendsPerMinute: '0',
                     });
                   }}
                   className="tactical-btn-ghost rounded text-sm"
@@ -448,35 +651,52 @@ export default function SettingsPage() {
                   <div>
                     <h3 className="font-semibold text-neutral-100 mb-1">SMTP rotation</h3>
                     <p className="text-sm text-neutral-400 leading-relaxed">
-                      When you have multiple SMTP servers, SparkMailer rotates between them using a weighted algorithm. Servers with higher health scores are selected more often. Health improves with successful sends and degrades on failures.
+                      When you have multiple SMTP servers, SparkMailer rotates between them using your <strong className="text-neutral-300 font-medium">rotation weight</strong> and live health. Higher weight increases share of traffic when the server is healthy; unhealthy servers are chosen less often. Use the table below to add per-server delays and per-minute caps enforced by the sending worker.
                     </p>
                   </div>
                 </div>
               </div>
 
-              {/* Active servers overview */}
+              {/* Active SMTP: throttle & rotation */}
               {!smtpLoading && smtpServers.length > 0 && (
-                <div className="rounded-xl bg-surface-700/40 border border-white/[0.06] p-5">
-                  <h3 className="font-semibold text-neutral-100 mb-3">Your SMTP servers</h3>
-                  <div className="flex flex-wrap gap-3">
-                    {(smtpServers as SmtpServerItem[]).map((s) => {
-                      const status = smtpStatusBadge(s);
-                      const inRotation = s.isActive && s.healthScore >= 30;
-                      return (
-                        <div
-                          key={s.id}
-                          className={`flex items-center gap-2 px-3 py-2 rounded-lg border ${
-                            inRotation ? 'bg-primary-500/10 border-primary-500/20' : 'bg-surface-800/60 border-white/[0.06]'
-                          }`}
-                        >
-                          <span className={`w-2 h-2 rounded-full ${inRotation ? 'bg-emerald-400' : 'bg-neutral-500'}`} />
-                          <span className="text-sm font-medium text-neutral-200">{s.name}</span>
-                          <span className={`text-xs px-2 py-0.5 rounded-full ${status.className}`}>{status.label}</span>
-                          <span className="text-xs text-neutral-500">Health: {Math.round(s.healthScore)}%</span>
-                        </div>
-                      );
-                    })}
+                <div className="rounded-xl bg-surface-700/40 border border-white/[0.06] overflow-hidden">
+                  <div className="p-5 border-b border-white/[0.06]">
+                    <h3 className="font-semibold text-neutral-100 mb-1">Active SMTPs — pacing & throttling</h3>
+                    <p className="text-sm text-neutral-500">
+                      <strong className="text-neutral-400">Delay after send</strong> adds extra wait time after each successful message on that SMTP. <strong className="text-neutral-400">Max sends/min</strong> caps volume per calendar minute per server (shared across workers via Redis). Use <strong className="text-neutral-400">0</strong> for no limit.
+                    </p>
                   </div>
+                  <ScrollableListRegion ariaLabel="SMTP delivery pacing settings" className="px-2 pb-2">
+                    <table className="w-full min-w-[640px] table-fixed border-collapse text-sm">
+                      <thead className="sticky top-0 z-10 bg-surface-900/95 backdrop-blur-sm border-b border-white/[0.08]">
+                        <tr>
+                          <th className="text-left py-3 px-3 text-xs font-medium text-neutral-500 font-sans whitespace-nowrap">Server</th>
+                          <th className="text-left py-3 px-2 text-xs font-medium text-neutral-500 font-sans whitespace-nowrap">Health</th>
+                          <th className="text-left py-3 px-2 text-xs font-medium text-neutral-500 font-sans whitespace-nowrap">Weight</th>
+                          <th className="text-left py-3 px-2 text-xs font-medium text-neutral-500 font-sans whitespace-nowrap">Delay (ms)</th>
+                          <th className="text-left py-3 px-2 text-xs font-medium text-neutral-500 font-sans whitespace-nowrap">Max/min</th>
+                          <th className="text-left py-3 px-2 text-xs font-medium text-neutral-500 font-sans whitespace-nowrap" />
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(smtpServers as SmtpServerItem[]).map((s) => (
+                          <SmtpDeliveryControlsRow
+                            key={s.id}
+                            server={{
+                              ...s,
+                              weight: s.weight ?? 10,
+                              sendDelayMs: s.sendDelayMs ?? 0,
+                              maxSendsPerMinute: s.maxSendsPerMinute ?? 0,
+                            }}
+                            statusBadge={smtpStatusBadge(s)}
+                            isSaving={patchDeliverySettings.isLoading && patchDeliverySettings.variables?.id === s.id}
+                            saveError={deliverySaveError?.id === s.id ? deliverySaveError.message : null}
+                            onSave={(data) => patchDeliverySettings.mutate({ id: s.id, data })}
+                          />
+                        ))}
+                      </tbody>
+                    </table>
+                  </ScrollableListRegion>
                 </div>
               )}
 

@@ -208,7 +208,9 @@ model SmtpServer {
   avgResponseMs   Int       @default(0)
   lastUsedAt      DateTime?
   lastHealthAt    DateTime?
-  weight          Int       @default(10) // Rotation weight
+  weight              Int       @default(10) // Rotation weight (relative share when healthy)
+  sendDelayMs         Int       @default(0) // Extra delay after each send via this server (milliseconds)
+  maxSendsPerMinute   Int       @default(0) // Cap sends per calendar minute per server (0 = unlimited)
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
 

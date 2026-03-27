@@ -80,7 +80,12 @@ export default function AdminCreateUserPage() {
                 : 'Share this license key with the user. They must go to the activation page and sign up using this key and the assigned email address.'}
             </p>
             {createResult?.emailSent === false && createResult?.emailError && (
-              <p className="text-amber-500/90 text-sm mb-4 font-sans">Email could not be sent: {createResult.emailError}. Configure system SMTP in Admin → Settings.</p>
+              <p className="text-amber-500/90 text-sm mb-4 font-sans">
+                Email could not be sent: {createResult.emailError}
+                {!/missing|migration|table|schema/i.test(createResult.emailError)
+                  ? ' Configure system SMTP in Admin → Settings.'
+                  : ''}
+              </p>
             )}
             <div className="rounded-lg bg-surface-700 border border-white/5 p-4 mb-4">
               <p className="tactical-label text-neutral-500 normal-case mb-1">License key</p>
@@ -173,19 +178,38 @@ export default function AdminCreateUserPage() {
               </div>
             </div>
             {createUser.error != null ? (
-              <p className="mt-4 text-sm text-red-400 font-medium">
+              <div className="mt-4 text-sm text-red-400 font-medium space-y-2">
+                <p>
+                  {(() => {
+                    const err = createUser.error as {
+                      response?: { data?: { error?: string | { message?: string } } };
+                      message?: string;
+                    };
+                    const dataError = err?.response?.data?.error;
+                    if (typeof dataError === 'string') return dataError;
+                    if (dataError && typeof dataError === 'object' && typeof dataError.message === 'string') return dataError.message;
+                    if (err?.message) return err.message;
+                    return 'Failed to create user. Check your connection and try again.';
+                  })()}
+                </p>
                 {(() => {
-                  const err = createUser.error as {
-                    response?: { data?: { error?: string | { message?: string } } };
-                    message?: string;
-                  };
-                  const dataError = err?.response?.data?.error;
-                  if (typeof dataError === 'string') return dataError;
-                  if (dataError && typeof dataError === 'object' && typeof dataError.message === 'string') return dataError.message;
-                  if (err?.message) return err.message;
-                  return 'Failed to create user. Check your connection and try again.';
+                  const err = createUser.error as { response?: { data?: { error?: string } } };
+                  const msg = err?.response?.data?.error;
+                  if (typeof msg !== 'string') return null;
+                  if (/active license already exists|license for this email already exists/i.test(msg)) {
+                    return (
+                      <p className="text-neutral-400 font-normal">
+                        If a previous attempt showed an error but the license was created, the key is listed under{' '}
+                        <Link to="/admin/licenses" className="text-primary-400 underline">
+                          Admin → Licenses
+                        </Link>
+                        .
+                      </p>
+                    );
+                  }
+                  return null;
                 })()}
-              </p>
+              </div>
             ) : null}
             <button
               type="submit"

@@ -12,6 +12,7 @@ router.post('/users', adminController.createUser);
 router.post('/licenses', adminController.createLicense);
 router.get('/licenses', adminController.listLicenses);
 router.patch('/licenses/:id', adminController.updateLicense);
+router.delete('/licenses/:id', adminController.deleteLicense);
 router.post('/licenses/:id/revoke', adminController.revokeLicense);
 
 router.get('/users', adminController.listUsers);

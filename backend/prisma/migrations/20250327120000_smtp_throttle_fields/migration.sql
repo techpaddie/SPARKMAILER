@@ -1,0 +1,3 @@
+-- AlterTable
+ALTER TABLE "SmtpServer" ADD COLUMN "sendDelayMs" INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE "SmtpServer" ADD COLUMN "maxSendsPerMinute" INTEGER NOT NULL DEFAULT 0;

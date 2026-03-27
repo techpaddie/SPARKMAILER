@@ -50,6 +50,17 @@ export const licenseService = {
     });
   },
 
+  /** Permanently removes the license and unlinks any users that referenced it. */
+  async deleteById(licenseId: string) {
+    await prisma.$transaction(async (tx) => {
+      await tx.user.updateMany({
+        where: { licenseId },
+        data: { licenseId: null },
+      });
+      await tx.license.delete({ where: { id: licenseId } });
+    });
+  },
+
   async suspend(licenseId: string) {
     return prisma.license.update({
       where: { id: licenseId },
