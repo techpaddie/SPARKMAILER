@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../services/api';
 import Icon from '../components/Icon';
+import { ScrollableListRegion } from '../components/ScrollableListRegion';
 
 type TrackingSummary = {
   unsubscribes: number;
@@ -61,7 +62,8 @@ export default function TrackingPage() {
     async () => {
       const { data } = await api.get('/dashboard/tracking');
       return data;
-    }
+    },
+    { refetchInterval: 45_000, refetchOnWindowFocus: true }
   );
 
   const summary = data?.summary ?? {
@@ -191,11 +193,11 @@ export default function TrackingPage() {
               }
             />
           ) : (
-            <div className="w-full overflow-x-auto">
+            <ScrollableListRegion ariaLabel={`Tracking table: ${activeTab}`}>
               {activeTab === 'suppression' ? (
                 <table className="w-full min-w-[760px] table-fixed">
-                  <thead>
-                    <tr className="border-b border-white/[0.08]">
+                  <thead className="sticky top-0 z-10 bg-surface-900/95 backdrop-blur-sm border-b border-white/[0.08]">
+                    <tr>
                       <th className="text-left py-4 px-4 text-xs font-medium tracking-wider text-neutral-500 font-sans whitespace-nowrap">Email</th>
                       <th className="text-left py-4 px-4 text-xs font-medium tracking-wider text-neutral-500 font-sans whitespace-nowrap">Reason</th>
                       <th className="text-left py-4 px-4 text-xs font-medium tracking-wider text-neutral-500 font-sans whitespace-nowrap">Domain</th>
@@ -215,8 +217,8 @@ export default function TrackingPage() {
                 </table>
               ) : (
                 <table className="w-full min-w-[1080px] table-fixed">
-                  <thead>
-                    <tr className="border-b border-white/[0.08]">
+                  <thead className="sticky top-0 z-10 bg-surface-900/95 backdrop-blur-sm border-b border-white/[0.08]">
+                    <tr>
                       <th className="text-left py-4 px-4 text-xs font-medium tracking-wider text-neutral-500 font-sans whitespace-nowrap">Email</th>
                       <th className="text-left py-4 px-4 text-xs font-medium tracking-wider text-neutral-500 font-sans whitespace-nowrap">Campaign</th>
                       <th className="text-left py-4 px-4 text-xs font-medium tracking-wider text-neutral-500 font-sans whitespace-nowrap">Source</th>
@@ -267,7 +269,7 @@ export default function TrackingPage() {
                   </tbody>
                 </table>
               )}
-            </div>
+            </ScrollableListRegion>
           )}
         </div>
       </div>

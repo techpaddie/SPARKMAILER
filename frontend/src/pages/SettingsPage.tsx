@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../services/api';
 import Icon from '../components/Icon';
+import { ScrollableListRegion } from '../components/ScrollableListRegion';
 
 type SmtpServerItem = {
   id: string;
@@ -74,7 +75,7 @@ export default function SettingsPage() {
   const { data: me, isLoading: meLoading, error: meError } = useQuery(
     ['me'],
     () => api.get('/auth/me').then((r) => r.data),
-    { retry: 1 }
+    { retry: 1, refetchInterval: 30_000, refetchOnWindowFocus: true }
   );
   const { data: smtpServers = [], isLoading: smtpLoading, error: smtpLoadError } = useQuery(
     ['smtp-servers'],
@@ -235,70 +236,72 @@ export default function SettingsPage() {
             <p className="text-amber-400 text-sm mb-4">Unable to load SMTP servers. You may need to sign in again.</p>
           )}
           {!smtpLoading && !smtpLoadError && smtpServers.length > 0 && (
-            <ul className="space-y-3 mb-6">
-              {smtpServers.map((s: SmtpServerItem) => {
-                const status = smtpStatusBadge(s);
-                return (
-                <li
-                  key={s.id}
-                  className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 py-4 px-4 bg-surface-700/50 rounded-lg border border-white/10"
-                >
-                  <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center gap-2 mb-1.5">
-                      <p className="font-medium text-neutral-100">{s.name}</p>
-                      <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold ${status.className}`}>
-                        {status.label}
-                      </span>
+            <ScrollableListRegion ariaLabel="Configured SMTP servers" className="mb-6 pr-1 -mr-1">
+              <ul className="space-y-3">
+                {smtpServers.map((s: SmtpServerItem) => {
+                  const status = smtpStatusBadge(s);
+                  return (
+                  <li
+                    key={s.id}
+                    className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 py-4 px-4 bg-surface-700/50 rounded-lg border border-white/10"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2 mb-1.5">
+                        <p className="font-medium text-neutral-100">{s.name}</p>
+                        <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold ${status.className}`}>
+                          {status.label}
+                        </span>
+                      </div>
+                      <p className="text-sm text-neutral-400 break-words">
+                        {s.host}:{s.port} {s.secure ? '• SSL/TLS' : '• STARTTLS/Plain'} • From: {s.fromEmail}
+                      </p>
+                      <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-neutral-500 font-sans">
+                        <span>Health: {Math.round(s.healthScore)}%</span>
+                        <span>User: {s.username}</span>
+                      </div>
                     </div>
-                    <p className="text-sm text-neutral-400 break-words">
-                      {s.host}:{s.port} {s.secure ? '• SSL/TLS' : '• STARTTLS/Plain'} • From: {s.fromEmail}
-                    </p>
-                    <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-neutral-500 font-sans">
-                      <span>Health: {Math.round(s.healthScore)}%</span>
-                      <span>User: {s.username}</span>
-                    </div>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    {!s.isActive && (
+                    <div className="flex flex-wrap items-center gap-2">
+                      {!s.isActive && (
+                        <button
+                          type="button"
+                          onClick={() => reactivateSmtp.mutate(s.id)}
+                          disabled={reactivateSmtp.isLoading}
+                          className="tactical-btn-primary rounded text-sm disabled:opacity-50"
+                        >
+                          {reactivateSmtp.isLoading ? 'Reactivating…' : 'Reactivate SMTP'}
+                        </button>
+                      )}
                       <button
                         type="button"
-                        onClick={() => reactivateSmtp.mutate(s.id)}
-                        disabled={reactivateSmtp.isLoading}
-                        className="tactical-btn-primary rounded text-sm disabled:opacity-50"
+                        onClick={() => {
+                          setEditingSmtpId(s.id);
+                          setSmtpForm({
+                            name: s.name,
+                            host: s.host,
+                            port: String(s.port),
+                            secure: s.secure,
+                            username: s.username,
+                            password: '',
+                            fromEmail: s.fromEmail,
+                            fromName: s.fromName ?? '',
+                          });
+                        }}
+                        className="tactical-btn-ghost rounded text-sm"
                       >
-                        {reactivateSmtp.isLoading ? 'Reactivating…' : 'Reactivate SMTP'}
+                        Edit
                       </button>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setEditingSmtpId(s.id);
-                        setSmtpForm({
-                          name: s.name,
-                          host: s.host,
-                          port: String(s.port),
-                          secure: s.secure,
-                          username: s.username,
-                          password: '',
-                          fromEmail: s.fromEmail,
-                          fromName: s.fromName ?? '',
-                        });
-                      }}
-                      className="tactical-btn-ghost rounded text-sm"
-                    >
-                      Edit
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => deleteSmtp.mutate(s.id)}
-                      className="text-red-400 hover:text-red-300 text-sm px-2 py-1"
-                    >
-                      Delete
-                    </button>
-                  </div>
-                </li>
-              )})}
-            </ul>
+                      <button
+                        type="button"
+                        onClick={() => deleteSmtp.mutate(s.id)}
+                        className="text-red-400 hover:text-red-300 text-sm px-2 py-1"
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </li>
+                )})}
+              </ul>
+            </ScrollableListRegion>
           )}
           <form onSubmit={handleSmtpSubmit} className="space-y-5">
             <h3 className="font-heading font-semibold text-sm text-neutral-200 tracking-tight">

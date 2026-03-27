@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import * as XLSX from 'xlsx';
 import { api } from '../services/api';
 import Icon from '../components/Icon';
+import { ScrollableListRegion } from '../components/ScrollableListRegion';
 
 type List = { id: string; name: string; contactCount: number };
 type Contact = { id: string; email: string; firstName?: string | null; lastName?: string | null };
@@ -121,6 +122,8 @@ export default function LeadsPage() {
   const [renameModal, setRenameModal] = useState<List | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const [deleteListConfirm, setDeleteListConfirm] = useState<List | null>(null);
+  const [deleteListError, setDeleteListError] = useState('');
+  const [listNotice, setListNotice] = useState('');
   const [deleteContactConfirm, setDeleteContactConfirm] = useState<{ listId: string; contact: Contact } | null>(null);
 
   const { data: lists = [], isLoading: listsLoading, error: listsError } = useQuery(
@@ -166,11 +169,14 @@ export default function LeadsPage() {
     {
       onSuccess: (_, deletedId) => {
         queryClient.invalidateQueries(['lists']);
+        queryClient.invalidateQueries(['campaigns']);
+        setDeleteListError('');
+        setListNotice('List deleted.');
         if (selectedListId === deletedId) setSelectedListId(null);
         setDeleteListConfirm(null);
       },
       onError: (err) => {
-        setCreateListError(parseApiError(err as Parameters<typeof parseApiError>[0]));
+        setDeleteListError(parseApiError(err as Parameters<typeof parseApiError>[0]));
       },
     }
   );
@@ -305,6 +311,12 @@ export default function LeadsPage() {
     setImportFileNotice('');
   }, [selectedListId]);
 
+  useEffect(() => {
+    if (!listNotice) return undefined;
+    const t = window.setTimeout(() => setListNotice(''), 5000);
+    return () => clearTimeout(t);
+  }, [listNotice]);
+
   const filteredContacts = useMemo(() => {
     const contacts = selectedList?.contacts ?? [];
     if (!contactSearch.trim()) return contacts;
@@ -324,9 +336,14 @@ export default function LeadsPage() {
     <div className="p-8">
       <div className="max-w-7xl mx-auto">
         <h1 className="tactical-heading text-2xl">Leads</h1>
-        <p className="tactical-label mb-8 normal-case text-neutral-500">
+        <p className="tactical-label mb-4 normal-case text-neutral-500">
           Manage your email lists: create lists, paste or upload emails (.xlsx, .xls, .csv), and remove contacts.
         </p>
+        {listNotice ? (
+          <p className="mb-6 text-primary-400 text-sm font-medium rounded-lg bg-primary-500/10 border border-primary-500/20 px-4 py-3">
+            {listNotice}
+          </p>
+        ) : null}
         <div className="grid lg:grid-cols-3 gap-8">
           <div className="lg:col-span-1">
             <div className="bg-surface-800/50 border border-white/[0.08] rounded-xl p-6">
@@ -341,37 +358,44 @@ export default function LeadsPage() {
                 <p className="text-neutral-500 text-sm mb-4">No lists yet. Create one below.</p>
               )}
               {!listsLoading && lists.length > 0 && (
-                <ul className="space-y-2 mb-4">
-                  {(lists as List[]).map((l) => (
-                    <li key={l.id} className="flex items-center gap-1 group">
-                      <button
-                        type="button"
-                        onClick={() => setSelectedListId(l.id)}
-                        className={`flex-1 text-left px-4 py-2 rounded-lg text-sm transition-colors ${
-                          selectedListId === l.id ? 'bg-primary-600/20 text-primary-400' : 'text-neutral-300 hover:bg-surface-800/50'
-                        }`}
-                      >
-                        {l.name} <span className="text-neutral-500">({l.contactCount})</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={(e) => { e.stopPropagation(); openRename(l); }}
-                        className="p-1.5 text-neutral-500 hover:text-neutral-300 hover:bg-surface-800 rounded opacity-0 group-hover:opacity-100"
-                        title="Rename list"
-                      >
-                        <Icon name="edit" size={18} />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={(e) => { e.stopPropagation(); setDeleteListConfirm(l); setCreateListError(''); }}
-                        className="p-1.5 text-neutral-500 hover:text-red-400 hover:bg-surface-800 rounded opacity-0 group-hover:opacity-100"
-                        title="Delete list"
-                      >
-                        <Icon name="delete" size={18} />
-                      </button>
-                    </li>
-                  ))}
-                </ul>
+                <ScrollableListRegion ariaLabel="Your email lists" maxHeightClass="max-h-[min(55vh,420px)]" className="mb-4 pr-1 -mr-1">
+                  <ul className="space-y-2">
+                    {(lists as List[]).map((l) => (
+                      <li key={l.id} className="flex items-center gap-1 group">
+                        <button
+                          type="button"
+                          onClick={() => setSelectedListId(l.id)}
+                          className={`flex-1 text-left px-4 py-2 rounded-lg text-sm transition-colors ${
+                            selectedListId === l.id ? 'bg-primary-600/20 text-primary-400' : 'text-neutral-300 hover:bg-surface-800/50'
+                          }`}
+                        >
+                          {l.name} <span className="text-neutral-500">({l.contactCount})</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); openRename(l); }}
+                          className="p-1.5 text-neutral-500 hover:text-neutral-300 hover:bg-surface-800 rounded opacity-0 group-hover:opacity-100"
+                          title="Rename list"
+                        >
+                          <Icon name="edit" size={18} />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setDeleteListConfirm(l);
+                            setDeleteListError('');
+                            setCreateListError('');
+                          }}
+                          className="p-1.5 text-neutral-500 hover:text-red-400 hover:bg-surface-800 rounded opacity-0 group-hover:opacity-100"
+                          title="Delete list"
+                        >
+                          <Icon name="delete" size={18} />
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </ScrollableListRegion>
               )}
               <div className="flex gap-2 items-end">
                 <div className="flex-1 space-y-1.5">
@@ -466,29 +490,31 @@ export default function LeadsPage() {
                     <div className="p-8 text-center text-neutral-500">No contacts match your search.</div>
                   )}
                   {!listLoading && displayContacts.length > 0 && (
-                    <ul className="max-h-72 overflow-auto">
-                      {displayContacts.map((c: Contact) => (
-                        <li
-                          key={c.id}
-                          className="px-6 py-2 border-b border-white/[0.06] flex items-center justify-between gap-2 group text-neutral-300 text-sm"
-                        >
-                          <span>{c.email}</span>
-                          <button
-                            type="button"
-                            onClick={() => setDeleteContactConfirm({ listId: selectedListId!, contact: c })}
-                            className="p-1.5 text-neutral-500 hover:text-red-400 rounded opacity-0 group-hover:opacity-100"
-                            title="Remove contact"
+                    <ScrollableListRegion ariaLabel="Contacts in selected list" className="pr-1 -mr-1">
+                      <ul>
+                        {displayContacts.map((c: Contact) => (
+                          <li
+                            key={c.id}
+                            className="px-6 py-2 border-b border-white/[0.06] flex items-center justify-between gap-2 group text-neutral-300 text-sm"
                           >
-                            <Icon name="delete" size={16} />
-                          </button>
-                        </li>
-                      ))}
-                      {filteredContacts.length > 100 && (
-                        <li className="px-6 py-2 text-neutral-500 text-sm">
-                          … and {filteredContacts.length - 100} more
-                        </li>
-                      )}
-                    </ul>
+                            <span>{c.email}</span>
+                            <button
+                              type="button"
+                              onClick={() => setDeleteContactConfirm({ listId: selectedListId!, contact: c })}
+                              className="p-1.5 text-neutral-500 hover:text-red-400 rounded opacity-0 group-hover:opacity-100"
+                              title="Remove contact"
+                            >
+                              <Icon name="delete" size={16} />
+                            </button>
+                          </li>
+                        ))}
+                        {filteredContacts.length > 100 && (
+                          <li className="px-6 py-2 text-neutral-500 text-sm">
+                            … and {filteredContacts.length - 100} more
+                          </li>
+                        )}
+                      </ul>
+                    </ScrollableListRegion>
                   )}
                 </div>
               </>
@@ -534,15 +560,29 @@ export default function LeadsPage() {
       )}
 
       {deleteListConfirm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4" onClick={() => setDeleteListConfirm(null)}>
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
+          onClick={() => {
+            setDeleteListConfirm(null);
+            setDeleteListError('');
+          }}
+        >
           <div className="tactical-card rounded-lg w-full max-w-md p-6" onClick={(e) => e.stopPropagation()}>
             <h3 className="font-heading text-lg font-semibold text-neutral-100 mb-2 tracking-tight">Delete list?</h3>
-            <p className="text-neutral-400 text-sm mb-4 font-sans">
-              “{deleteListConfirm.name}” and all its contacts will be removed. This cannot be undone.
+            <p className="text-neutral-400 text-sm mb-3 font-sans">
+              “{deleteListConfirm.name}” and all its contacts will be removed. Any campaigns that used this list are
+              removed as well, including their analytics for those sends. This cannot be undone.
             </p>
-            {createListError && <p className="text-red-400 text-sm mb-2 font-medium">{createListError}</p>}
+            {deleteListError ? <p className="text-red-400 text-sm mb-3 font-medium">{deleteListError}</p> : null}
             <div className="flex gap-2">
-              <button type="button" onClick={() => setDeleteListConfirm(null)} className="tactical-btn-ghost rounded text-sm">
+              <button
+                type="button"
+                onClick={() => {
+                  setDeleteListConfirm(null);
+                  setDeleteListError('');
+                }}
+                className="tactical-btn-ghost rounded text-sm"
+              >
                 Cancel
               </button>
               <button

@@ -94,7 +94,7 @@ model Campaign {
   templateId    String?
   template      Template?       @relation(fields: [templateId], references: [id])
   listId        String
-  list          List            @relation(fields: [listId], references: [id])
+  list          List            @relation(fields: [listId], references: [id], onDelete: Cascade)
   smtpServerId  String?
   smtpServer    SmtpServer?     @relation(fields: [smtpServerId], references: [id])
   metadata      Json?           // Extra campaign data

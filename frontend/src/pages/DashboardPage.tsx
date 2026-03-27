@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import {
@@ -12,6 +12,7 @@ import {
 } from 'recharts';
 import { api } from '../services/api';
 import Icon from '../components/Icon';
+import { ScrollableListRegion } from '../components/ScrollableListRegion';
 
 const statusColors: Record<string, string> = {
   DRAFT: 'bg-neutral-500',
@@ -47,15 +48,28 @@ type CampaignItem = { id: string; name: string; status: string; sentCount: numbe
 type SupportTicketSummary = { id: string; subject: string; status: string; lastMessageAt: string; latestMessage?: { authorType: string } | null };
 
 export default function DashboardPage() {
-  const { data: me } = useQuery<MeResponse>(['me'], async () => {
-    const { data } = await api.get('/auth/me');
-    return data;
-  });
+  const { data: me } = useQuery<MeResponse>(
+    ['me'],
+    async () => {
+      const { data } = await api.get('/auth/me');
+      return data;
+    },
+    { refetchInterval: 12_000, refetchOnWindowFocus: true }
+  );
 
-  const { data: campaigns = [] } = useQuery<CampaignItem[]>(['campaigns'], async () => {
-    const { data } = await api.get('/campaigns');
-    return data;
-  });
+  const { data: campaigns = [] } = useQuery<CampaignItem[]>(
+    ['campaigns'],
+    async () => {
+      const { data } = await api.get('/campaigns');
+      return data;
+    },
+    { refetchInterval: 5000, refetchOnWindowFocus: true }
+  );
+
+  const activeCampaignCount = useMemo(
+    () => campaigns.filter((c) => c.status === 'QUEUED' || c.status === 'SENDING').length,
+    [campaigns]
+  );
 
   const { data: supportTickets = [] } = useQuery<SupportTicketSummary[]>(
     ['support-tickets'],
@@ -65,7 +79,7 @@ export default function DashboardPage() {
   const ticketsWithNewReply = supportTickets.filter((t) => t.latestMessage?.authorType === 'ADMIN');
   const openTickets = supportTickets.filter((t) => t.status !== 'CLOSED' && t.status !== 'RESOLVED');
 
-  const recent = campaigns.slice(0, 5);
+  const recent = campaigns.slice(0, 40);
   const chartData = recent.map((c: { name: string; sentCount: number }) => ({
     name: c.name.slice(0, 15) + (c.name.length > 15 ? '...' : ''),
     sent: c.sentCount,
@@ -103,12 +117,19 @@ export default function DashboardPage() {
                 />
               </div>
             </div>
-            <div className="tactical-card rounded-lg p-6">
+            <div className="tactical-card rounded-lg p-6 border-t-2 border-t-cyan-500/30">
               <div className="flex items-center gap-2 tactical-label text-neutral-500 normal-case">
-                <Icon name="campaign" size={18} className="text-primary-500/70" /> Campaigns today
+                <Icon name="campaign" size={18} className="text-primary-500/70" /> Campaigns
               </div>
-              <p className="text-2xl font-heading font-bold text-neutral-100 mt-2 tracking-tight">
-                {me.quota.campaignsUsed} <span className="text-neutral-500 font-sans font-normal">/</span> {me.quota.maxCampaignsPerDay}
+              <p className="text-2xl font-heading font-bold text-neutral-100 mt-2 tracking-tight tabular-nums">
+                {activeCampaignCount}{' '}
+                <span className="text-neutral-500 font-sans font-normal text-base">active</span>
+              </p>
+              <p className="text-sm text-neutral-500 mt-2 font-medium">
+                Today&apos;s runs:{' '}
+                <span className="text-neutral-300 tabular-nums">
+                  {me.quota.campaignsUsed} / {me.quota.maxCampaignsPerDay}
+                </span>
               </p>
             </div>
             <div className="tactical-card rounded-lg p-6">
@@ -167,28 +188,30 @@ export default function DashboardPage() {
               <Icon name="list" size={22} className="text-primary-500/80" /> Recent campaigns
             </h2>
             {recent.length > 0 ? (
-              <div className="space-y-0">
-                {recent.map((c: { id: string; name: string; status: string; sentCount: number; totalRecipients: number }) => (
-                  <div
-                    key={c.id}
-                    className="flex items-center justify-between py-3 border-b border-white/[0.06] last:border-0"
-                  >
-                    <div>
-                      <p className="font-medium text-neutral-100">{c.name}</p>
-                      <p className="text-sm text-neutral-500 font-mono">
-                        {c.sentCount} / {c.totalRecipients} sent
-                      </p>
-                    </div>
-                    <span
-                      className={`px-2 py-0.5 text-xs font-semibold rounded uppercase tracking-wider text-white ${
-                        statusColors[c.status] || 'bg-neutral-600'
-                      }`}
+              <ScrollableListRegion ariaLabel="Recent campaigns" className="pr-1 -mr-1">
+                <div className="space-y-0">
+                  {recent.map((c: { id: string; name: string; status: string; sentCount: number; totalRecipients: number }) => (
+                    <div
+                      key={c.id}
+                      className="flex items-center justify-between py-3 border-b border-white/[0.06] last:border-0"
                     >
-                      {c.status}
-                    </span>
-                  </div>
-                ))}
-              </div>
+                      <div>
+                        <p className="font-medium text-neutral-100">{c.name}</p>
+                        <p className="text-sm text-neutral-500 font-mono">
+                          {c.sentCount} / {c.totalRecipients} sent
+                        </p>
+                      </div>
+                      <span
+                        className={`px-2 py-0.5 text-xs font-semibold rounded uppercase tracking-wider text-white ${
+                          statusColors[c.status] || 'bg-neutral-600'
+                        }`}
+                      >
+                        {c.status}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </ScrollableListRegion>
             ) : (
               <p className="text-neutral-500 py-12 text-center font-medium">
                 No campaigns yet. Create one to get started.
@@ -207,23 +230,25 @@ export default function DashboardPage() {
                 You have {ticketsWithNewReply.length} ticket{ticketsWithNewReply.length !== 1 ? 's' : ''} with new replies.
               </p>
             )}
-            <ul className="space-y-2 mb-4">
-              {openTickets.slice(0, 5).map((t) => (
-                <li key={t.id}>
-                  <Link
-                    to="/support"
-                    className="flex items-center justify-between py-2 px-3 rounded-lg hover:bg-white/[0.04] transition-colors"
-                  >
-                    <span className="text-neutral-200 truncate">{t.subject}</span>
-                    {t.latestMessage?.authorType === 'ADMIN' ? (
-                      <span className="text-primary-400 text-xs font-medium shrink-0 ml-2">New reply</span>
-                    ) : (
-                      <span className="text-neutral-500 text-xs shrink-0 ml-2">{t.status.replace(/_/g, ' ')}</span>
-                    )}
-                  </Link>
-                </li>
-              ))}
-            </ul>
+            <ScrollableListRegion ariaLabel="Open support tickets" maxHeightClass="max-h-[min(50vh,360px)]" className="mb-4 pr-1 -mr-1">
+              <ul className="space-y-2">
+                {openTickets.slice(0, 30).map((t) => (
+                  <li key={t.id}>
+                    <Link
+                      to="/support"
+                      className="flex items-center justify-between py-2 px-3 rounded-lg hover:bg-white/[0.04] transition-colors"
+                    >
+                      <span className="text-neutral-200 truncate">{t.subject}</span>
+                      {t.latestMessage?.authorType === 'ADMIN' ? (
+                        <span className="text-primary-400 text-xs font-medium shrink-0 ml-2">New reply</span>
+                      ) : (
+                        <span className="text-neutral-500 text-xs shrink-0 ml-2">{t.status.replace(/_/g, ' ')}</span>
+                      )}
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            </ScrollableListRegion>
             <Link to="/support" className="tactical-btn-ghost rounded text-sm inline-flex items-center gap-2">
               <Icon name="open_in_new" size={16} /> View all support tickets
             </Link>

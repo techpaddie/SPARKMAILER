@@ -1,5 +1,6 @@
 import { Response } from 'express';
 import { z } from 'zod';
+import { Prisma } from '@prisma/client';
 import { prisma } from '../../utils/prisma';
 import type { AuthenticatedRequest } from '../../middleware/types';
 
@@ -79,7 +80,18 @@ export async function remove(req: AuthenticatedRequest, res: Response) {
     res.status(404).json({ error: 'List not found' });
     return;
   }
-  await prisma.list.delete({ where: { id } });
+  try {
+    await prisma.list.delete({ where: { id } });
+  } catch (err) {
+    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2003') {
+      res.status(409).json({
+        error:
+          'This list is still linked to one or more campaigns. Delete those campaigns first, or remove their list association, then try again.',
+      });
+      return;
+    }
+    throw err;
+  }
   res.json({ success: true });
 }
 

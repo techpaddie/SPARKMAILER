@@ -66,7 +66,7 @@ export async function getMailgunStatsRoute(req: AuthenticatedRequest, res: Respo
 export async function getTracking(req: AuthenticatedRequest, res: Response) {
   const userId = req.user!.id;
 
-  const [suppressionCounts, recentEvents, recentSuppressions] = await Promise.all([
+  const [suppressionCounts, recentEvents, recentSuppressions, suppressedTotal] = await Promise.all([
     prisma.suppressionList.groupBy({
       by: ['reason'],
       where: { userId },
@@ -88,6 +88,7 @@ export async function getTracking(req: AuthenticatedRequest, res: Response) {
       orderBy: { createdAt: 'desc' },
       take: 100,
     }),
+    prisma.suppressionList.count({ where: { userId } }),
   ]);
 
   const countByReason = Object.fromEntries(
@@ -98,7 +99,7 @@ export async function getTracking(req: AuthenticatedRequest, res: Response) {
     unsubscribes: countByReason.unsubscribe ?? 0,
     bounces: (countByReason.bounce ?? 0) + (countByReason.bounced ?? 0) + (countByReason.failed ?? 0),
     spamReports: countByReason.spam ?? 0,
-    suppressed: recentSuppressions.length,
+    suppressed: suppressedTotal,
   };
 
   res.json({

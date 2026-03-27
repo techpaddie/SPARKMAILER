@@ -41,11 +41,16 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 
+/* Generous limit: dashboards poll multiple endpoints; many users may share one NAT IP. */
 app.use(
   rateLimit({
     windowMs: 15 * 60 * 1000,
-    max: 200,
-    message: { error: 'Too many requests' },
+    max: 3000,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: {
+      error: 'Too many requests from this network. Please wait a few minutes and try again.',
+    },
   })
 );
 

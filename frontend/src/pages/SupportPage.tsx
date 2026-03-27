@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../services/api';
 import Icon from '../components/Icon';
+import { ScrollableListRegion } from '../components/ScrollableListRegion';
 
 type MessageAttachment = {
   name: string;
@@ -352,31 +353,33 @@ export default function SupportPage() {
               ) : sortedTickets.length === 0 ? (
                 <div className="p-8 text-center text-neutral-500 font-medium">No support tickets yet.</div>
               ) : (
-                <ul className="divide-y divide-white/[0.06]">
-                  {sortedTickets.map((ticket) => (
-                    <li key={ticket.id}>
-                      <button
-                        type="button"
-                        onClick={() => setSelectedTicketId(ticket.id)}
-                        className={`w-full text-left p-4 transition-colors ${
-                          selectedTicketId === ticket.id ? 'bg-white/[0.04]' : 'hover:bg-white/[0.03]'
-                        }`}
-                      >
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="min-w-0">
-                            <p className="text-neutral-100 font-medium truncate">{ticket.subject}</p>
-                            <p className="text-xs text-neutral-500 mt-1">
-                              {ticket.category || 'General'} • {ticket.messageCount} messages
-                            </p>
+                <ScrollableListRegion ariaLabel="Your support tickets">
+                  <ul className="divide-y divide-white/[0.06]">
+                    {sortedTickets.map((ticket) => (
+                      <li key={ticket.id}>
+                        <button
+                          type="button"
+                          onClick={() => setSelectedTicketId(ticket.id)}
+                          className={`w-full text-left p-4 transition-colors ${
+                            selectedTicketId === ticket.id ? 'bg-white/[0.04]' : 'hover:bg-white/[0.03]'
+                          }`}
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <p className="text-neutral-100 font-medium truncate">{ticket.subject}</p>
+                              <p className="text-xs text-neutral-500 mt-1">
+                                {ticket.category || 'General'} • {ticket.messageCount} messages
+                              </p>
+                            </div>
+                          <span className={`px-2 py-0.5 text-xs font-semibold rounded uppercase tracking-wider ${statusPill(ticket.status)}`}>
+                            {formatTicketStatus(ticket.status)}
+                            </span>
                           </div>
-                        <span className={`px-2 py-0.5 text-xs font-semibold rounded uppercase tracking-wider ${statusPill(ticket.status)}`}>
-                          {formatTicketStatus(ticket.status)}
-                          </span>
-                        </div>
-                      </button>
-                    </li>
-                  ))}
-                </ul>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </ScrollableListRegion>
               )}
             </div>
           </div>
@@ -453,7 +456,7 @@ export default function SupportPage() {
                     </div>
                   </div>
 
-                  <div className="p-6 space-y-4 max-h-[520px] overflow-auto">
+                  <ScrollableListRegion ariaLabel="Ticket conversation" className="p-6 space-y-4">
                     {selectedTicket.messages.map((ticketMessage) => (
                       <div
                         key={ticketMessage.id}
@@ -488,7 +491,7 @@ export default function SupportPage() {
                         )}
                       </div>
                     ))}
-                  </div>
+                  </ScrollableListRegion>
 
                   <div className="p-6 border-t border-white/[0.08]">
                     <label className="tactical-label normal-case text-neutral-400">Reply</label>

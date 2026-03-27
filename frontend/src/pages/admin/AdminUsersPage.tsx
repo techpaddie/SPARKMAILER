@@ -5,6 +5,7 @@ import { api } from '../../services/api';
 import { useAuthStore } from '../../context/authStore';
 import { ADMIN_IMPERSONATION_RESTORE_KEY } from '../../constants';
 import Icon from '../../components/Icon';
+import { ScrollableListRegion } from '../../components/ScrollableListRegion';
 
 export default function AdminUsersPage() {
   const navigate = useNavigate();
@@ -179,12 +180,7 @@ export default function AdminUsersPage() {
           ) : users.length === 0 ? (
             <div className="p-12 text-center text-neutral-500 font-medium">No registered users yet.</div>
           ) : (
-            <div
-              className="w-full overflow-x-auto overflow-y-visible"
-              style={{ WebkitOverflowScrolling: 'touch' }}
-              role="region"
-              aria-label="User list table - scroll horizontally on small screens"
-            >
+            <ScrollableListRegion ariaLabel="User list">
               <table className="w-full min-w-[800px] table-fixed border-collapse">
                 <colgroup>
                   <col style={{ width: '24%' }} />
@@ -193,8 +189,8 @@ export default function AdminUsersPage() {
                   <col style={{ width: '20%' }} />
                   <col style={{ width: '28%' }} />
                 </colgroup>
-                <thead>
-                  <tr className="border-b border-white/[0.08]">
+                <thead className="sticky top-0 z-10 bg-surface-900/95 backdrop-blur-sm border-b border-white/[0.08]">
+                  <tr>
                     <th className="text-left py-4 px-4 text-xs font-medium tracking-wider text-neutral-500 font-sans normal-case whitespace-nowrap">Email</th>
                     <th className="text-left py-4 px-4 text-xs font-medium tracking-wider text-neutral-500 font-sans normal-case whitespace-nowrap">Name</th>
                     <th className="text-left py-4 px-4 text-xs font-medium tracking-wider text-neutral-500 font-sans normal-case whitespace-nowrap">Status</th>
@@ -284,7 +280,7 @@ export default function AdminUsersPage() {
                   ))}
                 </tbody>
               </table>
-            </div>
+            </ScrollableListRegion>
           )}
         </div>
       </div>

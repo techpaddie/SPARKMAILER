@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../services/api';
 import Icon from '../components/Icon';
+import { ScrollableListRegion } from '../components/ScrollableListRegion';
 
 function isHtml(content: string): boolean {
   const t = content.trim();
@@ -409,39 +410,41 @@ export default function TemplatesPage() {
               <div className="p-8 text-center text-neutral-500 font-medium">No templates yet.</div>
             )}
             {!isLoading && templates.length > 0 && (
-              <ul className="divide-y divide-white/[0.06]">
-                {templates.map((t: { id: string; name: string; subject: string | null; updatedAt: string }) => (
-                  <li key={t.id} className="flex items-center justify-between px-4 py-3 hover:bg-white/[0.03] transition-colors">
-                    <div>
-                      <p className="font-medium text-neutral-100">{t.name}</p>
-                      {t.subject && <p className="text-sm text-neutral-500">{t.subject}</p>}
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => { setPreviewId(t.id); setError(''); }}
-                        className="text-slate-400 hover:text-slate-200 text-sm flex items-center gap-1"
-                      >
-                        <Icon name="visibility" size={18} /> Preview
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => openEdit(t)}
-                        className="text-primary-400 hover:text-primary-300 text-sm"
-                      >
-                        Edit
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => deleteTemplate.mutate(t.id)}
-                        className="text-red-400 hover:text-red-300 text-sm"
-                      >
-                        Delete
-                      </button>
-                    </div>
-                  </li>
-                ))}
-              </ul>
+              <ScrollableListRegion ariaLabel="All templates">
+                <ul className="divide-y divide-white/[0.06]">
+                  {templates.map((t: { id: string; name: string; subject: string | null; updatedAt: string }) => (
+                    <li key={t.id} className="flex items-center justify-between px-4 py-3 hover:bg-white/[0.03] transition-colors">
+                      <div>
+                        <p className="font-medium text-neutral-100">{t.name}</p>
+                        {t.subject && <p className="text-sm text-neutral-500">{t.subject}</p>}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => { setPreviewId(t.id); setError(''); }}
+                          className="text-slate-400 hover:text-slate-200 text-sm flex items-center gap-1"
+                        >
+                          <Icon name="visibility" size={18} /> Preview
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => openEdit(t)}
+                          className="text-primary-400 hover:text-primary-300 text-sm"
+                        >
+                          Edit
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => deleteTemplate.mutate(t.id)}
+                          className="text-red-400 hover:text-red-300 text-sm"
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </ScrollableListRegion>
             )}
           </div>
           <div className="tactical-card rounded-lg p-6 border-t-2 border-t-primary-500/40">

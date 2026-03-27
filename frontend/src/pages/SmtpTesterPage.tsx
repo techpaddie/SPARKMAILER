@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import Icon from '../components/Icon';
+import { ScrollableListRegion } from '../components/ScrollableListRegion';
 import { api, apiBaseURL } from '../services/api';
 import { useAuthStore } from '../context/authStore';
 
@@ -308,7 +309,7 @@ export default function SmtpTesterPage() {
                 </div>
               </div>
               <div className="bg-black/30">
-                <div className="max-h-[520px] overflow-auto px-6 py-4 font-mono text-xs">
+                <ScrollableListRegion ariaLabel="SMTP test log output" maxHeightClass="max-h-[min(70vh,520px)]" className="px-6 py-4 font-mono text-xs">
                   {logs.length === 0 ? (
                     <div className="py-16 text-center text-neutral-500 font-medium">
                       Run a test to see connection and delivery logs here.
@@ -327,7 +328,7 @@ export default function SmtpTesterPage() {
                       <div ref={logEndRef} />
                     </div>
                   )}
-                </div>
+                </ScrollableListRegion>
               </div>
             </div>
 

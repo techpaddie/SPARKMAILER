@@ -184,7 +184,11 @@ export async function getSupportTicket(req: AuthenticatedRequest, res: Response)
           },
         },
       },
-    })!;
+    });
+    if (!ticket) {
+      res.status(404).json({ error: 'Support ticket not found' });
+      return;
+    }
   }
 
   res.json(toAdminTicketDetail(ticket));

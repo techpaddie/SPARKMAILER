@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { api } from '../../services/api';
 import Icon from '../../components/Icon';
+import { ScrollableListRegion } from '../../components/ScrollableListRegion';
 
 type UsageResponse = {
   usage?: { date: string; emailsSent: number; campaignsRun: number }[];
@@ -78,20 +79,15 @@ export default function AdminUsagePage() {
                 <Icon name="chevron_right" size={16} /> Scroll for more columns
               </p>
             </div>
-            <div
-              className="w-full overflow-x-auto overflow-y-visible"
-              style={{ WebkitOverflowScrolling: 'touch' }}
-              role="region"
-              aria-label="Summary by user table - scroll horizontally on small screens"
-            >
+            <ScrollableListRegion ariaLabel="Usage summary by user">
               <table className="w-full min-w-[500px] table-fixed border-collapse">
                 <colgroup>
                   <col style={{ width: '50%' }} />
                   <col style={{ width: '25%' }} />
                   <col style={{ width: '25%' }} />
                 </colgroup>
-                <thead>
-                  <tr className="border-b border-white/[0.08]">
+                <thead className="sticky top-0 z-10 bg-surface-900/95 backdrop-blur-sm border-b border-white/[0.08]">
+                  <tr>
                     <th className="text-left py-4 px-4 text-xs font-medium tracking-wider text-neutral-500 font-sans whitespace-nowrap">User</th>
                     <th className="text-left py-4 px-4 text-xs font-medium tracking-wider text-neutral-500 font-sans whitespace-nowrap">Emails sent</th>
                     <th className="text-left py-4 px-4 text-xs font-medium tracking-wider text-neutral-500 font-sans whitespace-nowrap">Campaigns</th>
@@ -109,7 +105,7 @@ export default function AdminUsagePage() {
                   ))}
                 </tbody>
               </table>
-            </div>
+            </ScrollableListRegion>
           </div>
         )}
       </div>

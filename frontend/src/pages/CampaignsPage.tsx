@@ -1,7 +1,40 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../services/api';
 import Icon from '../components/Icon';
+import { ScrollableListRegion } from '../components/ScrollableListRegion';
+
+const CAMPAIGN_PAGE_SIZE = 50;
+
+type CampaignMetadata = {
+  htmlContent?: string;
+  replyTo?: string;
+  attachments?: { filename: string; contentType: string; content?: string }[];
+};
+
+type CampaignDetail = {
+  id: string;
+  name: string;
+  subject: string;
+  status: string;
+  scheduledAt?: string | null;
+  startedAt?: string | null;
+  completedAt?: string | null;
+  sentCount: number;
+  totalRecipients: number;
+  failedCount?: number;
+  pendingCount?: number;
+  metadata?: CampaignMetadata | null;
+  list?: { id: string; name: string; contactCount: number } | null;
+  template?: { id: string; name: string; htmlContent: string } | null;
+  recipientStatusCounts?: Record<string, number>;
+};
+
+function formatCampaignDate(iso?: string | null) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? String(iso) : d.toLocaleString();
+}
 
 const statusColors: Record<string, string> = {
   DRAFT: 'bg-neutral-500',
@@ -33,6 +66,8 @@ export default function CampaignsPage() {
   const [editName, setEditName] = useState('');
   const [editSubject, setEditSubject] = useState('');
   const [editError, setEditError] = useState('');
+  const [campaignListPage, setCampaignListPage] = useState(0);
+  const [viewCampaignId, setViewCampaignId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!toast) return;
@@ -54,6 +89,33 @@ export default function CampaignsPage() {
     },
     refetchInterval: (data) => (data?.some(hasActiveCampaign) ? 2000 : false),
   });
+
+  const {
+    data: campaignDetail,
+    isLoading: campaignDetailLoading,
+    error: campaignDetailError,
+  } = useQuery<CampaignDetail>({
+    queryKey: ['campaign', viewCampaignId],
+    queryFn: async () => {
+      const { data } = await api.get(`/campaigns/${viewCampaignId}`);
+      return data;
+    },
+    enabled: !!viewCampaignId,
+  });
+
+  useEffect(() => {
+    const maxPage = Math.max(0, Math.ceil(campaigns.length / CAMPAIGN_PAGE_SIZE) - 1);
+    if (campaignListPage > maxPage) setCampaignListPage(maxPage);
+  }, [campaigns.length, campaignListPage]);
+
+  const paginatedCampaigns = useMemo(() => {
+    const start = campaignListPage * CAMPAIGN_PAGE_SIZE;
+    return campaigns.slice(start, start + CAMPAIGN_PAGE_SIZE);
+  }, [campaigns, campaignListPage]);
+
+  const listRangeStart = campaigns.length === 0 ? 0 : campaignListPage * CAMPAIGN_PAGE_SIZE + 1;
+  const listRangeEnd = Math.min((campaignListPage + 1) * CAMPAIGN_PAGE_SIZE, campaigns.length);
+  const showListPagination = campaigns.length > CAMPAIGN_PAGE_SIZE;
   const { data: lists = [] } = useQuery(
     ['lists'],
     () => api.get('/lists').then((r) => r.data)
@@ -100,8 +162,9 @@ export default function CampaignsPage() {
   const startCampaign = useMutation(
     (id: string) => api.post(`/campaigns/${id}/start`),
     {
-      onSuccess: () => {
+      onSuccess: (_, id) => {
         queryClient.invalidateQueries(['campaigns']);
+        queryClient.invalidateQueries({ queryKey: ['campaign', id] });
         setStartingId(null);
         setToast({ type: 'success', message: 'Campaign started.' });
       },
@@ -191,8 +254,9 @@ export default function CampaignsPage() {
   const pauseCampaign = useMutation(
     (id: string) => api.post(`/campaigns/${id}/pause`),
     {
-      onSuccess: () => {
+      onSuccess: (_, id) => {
         queryClient.invalidateQueries(['campaigns']);
+        queryClient.invalidateQueries({ queryKey: ['campaign', id] });
         setToast({ type: 'success', message: 'Campaign paused.' });
       },
       onError: (err: { response?: { data?: { error?: string } } }) => {
@@ -205,8 +269,9 @@ export default function CampaignsPage() {
   const resumeCampaign = useMutation(
     (id: string) => api.post(`/campaigns/${id}/resume`),
     {
-      onSuccess: () => {
+      onSuccess: (_, id) => {
         queryClient.invalidateQueries(['campaigns']);
+        queryClient.invalidateQueries({ queryKey: ['campaign', id] });
         setToast({ type: 'success', message: 'Campaign resumed.' });
       },
       onError: (err: { response?: { data?: { error?: string } } }) => {
@@ -225,8 +290,9 @@ export default function CampaignsPage() {
     ({ id, data }: { id: string; data: { name?: string; subject?: string } }) =>
       api.patch(`/campaigns/${id}`, data),
     {
-      onSuccess: () => {
+      onSuccess: (_, { id }) => {
         queryClient.invalidateQueries(['campaigns']);
+        queryClient.invalidateQueries({ queryKey: ['campaign', id] });
         setEditingCampaign(null);
         setEditError('');
         setToast({ type: 'success', message: 'Campaign updated.' });
@@ -242,8 +308,10 @@ export default function CampaignsPage() {
   const deleteCampaign = useMutation(
     (id: string) => api.delete(`/campaigns/${id}`),
     {
-      onSuccess: () => {
+      onSuccess: (_, deletedId) => {
         queryClient.invalidateQueries(['campaigns']);
+        queryClient.removeQueries({ queryKey: ['campaign', deletedId] });
+        setViewCampaignId((openId) => (openId === deletedId ? null : openId));
         setToast({ type: 'success', message: 'Campaign deleted.' });
       },
       onError: (err: { response?: { data?: { error?: string } } }) => {
@@ -561,7 +629,20 @@ export default function CampaignsPage() {
                   <Icon name="campaign" size={22} className="text-primary-500/80" /> Campaign list
                 </h3>
                 <p className="text-xs text-neutral-500 font-sans mt-0.5">
-                  Showing <span className="text-neutral-300 font-medium">{campaigns.length}</span> campaigns
+                  {campaigns.length === 0 ? (
+                    <>No campaigns</>
+                  ) : (
+                    <>
+                      Showing{' '}
+                      <span className="text-neutral-300 font-medium">
+                        {listRangeStart}–{listRangeEnd}
+                      </span>{' '}
+                      of <span className="text-neutral-300 font-medium">{campaigns.length}</span> campaigns
+                      {showListPagination ? (
+                        <span className="text-neutral-600"> · {CAMPAIGN_PAGE_SIZE} per page</span>
+                      ) : null}
+                    </>
+                  )}
                 </p>
               </div>
               <p className="text-xs text-neutral-500 font-sans flex items-center gap-1 md:hidden" aria-hidden="true">
@@ -575,159 +656,358 @@ export default function CampaignsPage() {
                 No campaigns yet. Create your first campaign to get started.
               </div>
             ) : (
-              <div
-                className="w-full overflow-x-auto overflow-y-visible"
-                style={{ WebkitOverflowScrolling: 'touch' }}
-                role="region"
-                aria-label="Campaign list table - scroll horizontally on small screens"
-              >
-                <table className="w-full min-w-[980px] table-fixed border-collapse">
-                  <colgroup>
-                    <col style={{ width: '18%' }} />
-                    <col style={{ width: '24%' }} />
-                    <col style={{ width: '12%' }} />
-                    <col style={{ width: '20%' }} />
-                    <col style={{ width: '12%' }} />
-                    <col style={{ width: '14%' }} />
-                  </colgroup>
-                  <thead>
-                    <tr className="border-b border-white/[0.08]">
-                      <th className="text-left py-4 px-4 text-xs font-medium tracking-wider text-neutral-500 font-sans normal-case whitespace-nowrap">Name</th>
-                      <th className="text-left py-4 px-4 text-xs font-medium tracking-wider text-neutral-500 font-sans normal-case whitespace-nowrap">Subject</th>
-                      <th className="text-left py-4 px-4 text-xs font-medium tracking-wider text-neutral-500 font-sans normal-case whitespace-nowrap">Status</th>
-                      <th className="text-left py-4 px-4 text-xs font-medium tracking-wider text-neutral-500 font-sans normal-case whitespace-nowrap">Progress</th>
-                      <th className="text-left py-4 px-4 text-xs font-medium tracking-wider text-neutral-500 font-sans normal-case whitespace-nowrap">List</th>
-                      <th className="text-left py-4 px-4 text-xs font-medium tracking-wider text-neutral-500 font-sans normal-case whitespace-nowrap">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {campaigns.map(
-                      (c: {
-                        id: string;
-                        name: string;
-                        subject: string;
-                        status: string;
-                        sentCount: number;
-                        totalRecipients: number;
-                        failedCount?: number;
-                        pendingCount?: number;
-                        list: { name: string };
-                      }) => (
-                        <tr
-                          key={c.id}
-                          className="border-b border-white/[0.06] hover:bg-white/[0.03] transition-colors"
-                        >
-                          <td className="py-4 px-4 align-top min-w-0">
-                            <span className="font-medium text-neutral-100 truncate block min-w-0" title={c.name}>
-                              {c.name}
-                            </span>
-                          </td>
-                          <td className="py-4 px-4 align-top text-neutral-400 min-w-0">
-                            <span className="truncate block min-w-0" title={c.subject}>
-                              {c.subject}
-                            </span>
-                          </td>
-                          <td className="py-4 px-4 align-top whitespace-nowrap">
-                            <span
-                              className={`inline-flex px-2 py-0.5 text-xs font-semibold rounded uppercase tracking-wider text-white ${
-                                statusColors[c.status] || 'bg-neutral-600'
-                              }`}
-                            >
-                              {c.status}
-                            </span>
-                          </td>
-                          <td className="py-4 px-4 align-top">
-                            <div className="flex flex-col gap-1 min-w-0">
-                              <div className="flex items-center gap-2 text-sm whitespace-nowrap">
-                                <span className="text-emerald-400">{c.sentCount} sent</span>
-                                {(c.failedCount ?? 0) > 0 && <span className="text-red-400">{c.failedCount} failed</span>}
-                                {(c.pendingCount ?? 0) > 0 && <span className="text-amber-400">{c.pendingCount} pending</span>}
-                                <span className="text-neutral-500">/ {c.totalRecipients}</span>
-                              </div>
-                              {c.totalRecipients > 0 && (
-                                <div className="w-36 h-1.5 bg-surface-600 rounded-full overflow-hidden">
-                                  <div
-                                    className="h-full bg-emerald-500 rounded-full transition-all duration-300"
-                                    style={{ width: `${(c.sentCount / c.totalRecipients) * 100}%` }}
-                                  />
+              <>
+                <ScrollableListRegion ariaLabel="Campaign list">
+                  <table className="w-full min-w-[980px] table-fixed border-collapse">
+                    <colgroup>
+                      <col style={{ width: '18%' }} />
+                      <col style={{ width: '24%' }} />
+                      <col style={{ width: '12%' }} />
+                      <col style={{ width: '20%' }} />
+                      <col style={{ width: '12%' }} />
+                      <col style={{ width: '14%' }} />
+                    </colgroup>
+                    <thead className="sticky top-0 z-10 bg-surface-900/95 backdrop-blur-sm border-b border-white/[0.08]">
+                      <tr>
+                        <th className="text-left py-4 px-4 text-xs font-medium tracking-wider text-neutral-500 font-sans normal-case whitespace-nowrap">Name</th>
+                        <th className="text-left py-4 px-4 text-xs font-medium tracking-wider text-neutral-500 font-sans normal-case whitespace-nowrap">Subject</th>
+                        <th className="text-left py-4 px-4 text-xs font-medium tracking-wider text-neutral-500 font-sans normal-case whitespace-nowrap">Status</th>
+                        <th className="text-left py-4 px-4 text-xs font-medium tracking-wider text-neutral-500 font-sans normal-case whitespace-nowrap">Progress</th>
+                        <th className="text-left py-4 px-4 text-xs font-medium tracking-wider text-neutral-500 font-sans normal-case whitespace-nowrap">List</th>
+                        <th className="text-left py-4 px-4 text-xs font-medium tracking-wider text-neutral-500 font-sans normal-case whitespace-nowrap">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {paginatedCampaigns.map(
+                        (c: {
+                          id: string;
+                          name: string;
+                          subject: string;
+                          status: string;
+                          sentCount: number;
+                          totalRecipients: number;
+                          failedCount?: number;
+                          pendingCount?: number;
+                          list: { name: string };
+                        }) => (
+                          <tr
+                            key={c.id}
+                            className="border-b border-white/[0.06] hover:bg-white/[0.03] transition-colors"
+                          >
+                            <td className="py-4 px-4 align-top min-w-0">
+                              <span className="font-medium text-neutral-100 truncate block min-w-0" title={c.name}>
+                                {c.name}
+                              </span>
+                            </td>
+                            <td className="py-4 px-4 align-top text-neutral-400 min-w-0">
+                              <span className="truncate block min-w-0" title={c.subject}>
+                                {c.subject}
+                              </span>
+                            </td>
+                            <td className="py-4 px-4 align-top whitespace-nowrap">
+                              <span
+                                className={`inline-flex px-2 py-0.5 text-xs font-semibold rounded uppercase tracking-wider text-white ${
+                                  statusColors[c.status] || 'bg-neutral-600'
+                                }`}
+                              >
+                                {c.status}
+                              </span>
+                            </td>
+                            <td className="py-4 px-4 align-top">
+                              <div className="flex flex-col gap-1 min-w-0">
+                                <div className="flex items-center gap-2 text-sm whitespace-nowrap flex-wrap">
+                                  <span className="text-emerald-400">{c.sentCount} sent</span>
+                                  {(c.failedCount ?? 0) > 0 && <span className="text-red-400">{c.failedCount} failed</span>}
+                                  {(c.pendingCount ?? 0) > 0 && <span className="text-amber-400">{c.pendingCount} pending</span>}
+                                  <span className="text-neutral-500">/ {c.totalRecipients}</span>
                                 </div>
-                              )}
-                            </div>
-                          </td>
-                          <td className="py-4 px-4 align-top text-neutral-400 min-w-0">
-                            <span className="truncate block min-w-0" title={c.list?.name || '—'}>
-                              {c.list?.name || '—'}
-                            </span>
-                          </td>
-                          <td className="py-4 px-4 align-top whitespace-nowrap">
-                            <div className="flex flex-wrap items-center gap-2">
-                              {c.status === 'DRAFT' && (
-                                <button
-                                  type="button"
-                                  onClick={() => handleStart(c.id)}
-                                  disabled={startingId === c.id || startCampaign.isLoading}
-                                  className="tactical-btn-primary px-3 py-1.5 text-sm rounded disabled:opacity-50"
-                                >
-                                  {startingId === c.id ? 'Starting…' : 'Start sending'}
-                                </button>
-                              )}
-                              {(c.status === 'QUEUED' || c.status === 'SENDING') && (
-                                <button
-                                  type="button"
-                                  onClick={() => pauseCampaign.mutate(c.id)}
-                                  disabled={pauseCampaign.isLoading}
-                                  className="px-3 py-1.5 bg-orange-600 hover:bg-orange-500 text-white text-sm font-medium rounded-lg disabled:opacity-50"
-                                >
-                                  Pause
-                                </button>
-                              )}
-                              {c.status === 'PAUSED' && (
-                                <>
-                                  <button
-                                    type="button"
-                                    onClick={() => resumeCampaign.mutate(c.id)}
-                                    disabled={resumeCampaign.isLoading}
-                                    className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-medium rounded-lg disabled:opacity-50"
-                                  >
-                                    Resume
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      setEditingCampaign({ id: c.id, name: c.name, subject: c.subject });
-                                      setEditName(c.name);
-                                      setEditSubject(c.subject);
-                                      setEditError('');
-                                    }}
-                                    className="tactical-btn-ghost px-3 py-1.5 text-sm rounded"
-                                  >
-                                    Edit
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      if (window.confirm('Delete this campaign? This cannot be undone.')) {
-                                        deleteCampaign.mutate(c.id);
-                                      }
-                                    }}
-                                    className="px-3 py-1.5 bg-red-600 hover:bg-red-500 text-white text-sm font-medium rounded-lg"
-                                  >
-                                    Delete
-                                  </button>
-                                </>
-                              )}
-                            </div>
-                          </td>
-                        </tr>
-                      )
-                    )}
-                  </tbody>
-                </table>
-              </div>
+                                {c.totalRecipients > 0 && (
+                                  <div className="w-36 h-1.5 bg-surface-600 rounded-full overflow-hidden">
+                                    <div
+                                      className="h-full bg-emerald-500 rounded-full transition-all duration-300"
+                                      style={{ width: `${(c.sentCount / c.totalRecipients) * 100}%` }}
+                                    />
+                                  </div>
+                                )}
+                              </div>
+                            </td>
+                            <td className="py-4 px-4 align-top text-neutral-400 min-w-0">
+                              <span className="truncate block min-w-0" title={c.list?.name || '—'}>
+                                {c.list?.name || '—'}
+                              </span>
+                            </td>
+                            <td className="py-4 px-4 align-top whitespace-nowrap">
+                              <button
+                                type="button"
+                                onClick={() => setViewCampaignId(c.id)}
+                                className="tactical-btn-ghost inline-flex items-center gap-1.5 px-3 py-1.5 text-sm rounded"
+                              >
+                                <Icon name="visibility" size={18} /> View
+                              </button>
+                            </td>
+                          </tr>
+                        )
+                      )}
+                    </tbody>
+                  </table>
+                </ScrollableListRegion>
+                {showListPagination ? (
+                  <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-t border-white/[0.08] bg-surface-900/40">
+                    <p className="text-xs text-neutral-500 font-sans">
+                      Page{' '}
+                      <span className="text-neutral-300 font-medium tabular-nums">
+                        {campaignListPage + 1} / {Math.max(1, Math.ceil(campaigns.length / CAMPAIGN_PAGE_SIZE))}
+                      </span>
+                    </p>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        disabled={campaignListPage <= 0}
+                        onClick={() => setCampaignListPage((p) => Math.max(0, p - 1))}
+                        className="tactical-btn-ghost rounded text-sm disabled:opacity-40 disabled:pointer-events-none"
+                      >
+                        Previous
+                      </button>
+                      <button
+                        type="button"
+                        disabled={(campaignListPage + 1) * CAMPAIGN_PAGE_SIZE >= campaigns.length}
+                        onClick={() => setCampaignListPage((p) => p + 1)}
+                        className="tactical-btn-primary rounded text-sm disabled:opacity-40 disabled:pointer-events-none"
+                      >
+                        Next
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+              </>
             )}
           </div>
         </section>
       </div>
+
+      {viewCampaignId && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
+          onClick={() => setViewCampaignId(null)}
+        >
+          <div
+            className="tactical-card border-t-2 border-t-primary-500/50 rounded-lg w-full max-w-3xl max-h-[92vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="p-6 border-b border-white/[0.08] flex items-start justify-between gap-4">
+              <div>
+                <h2 className="font-heading font-semibold text-xl text-neutral-100 tracking-tight flex items-center gap-2">
+                  <Icon name="visibility" size={24} className="text-primary-500/80" /> Campaign details
+                </h2>
+                <p className="text-xs text-neutral-500 mt-1 font-sans">Summary as stored when you created or last edited the campaign.</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setViewCampaignId(null)}
+                className="tactical-btn-ghost rounded text-sm shrink-0"
+              >
+                Close
+              </button>
+            </div>
+            <div className="p-6 space-y-6">
+              {campaignDetailLoading && (
+                <p className="text-neutral-500 text-sm font-medium">Loading campaign…</p>
+              )}
+              {campaignDetailError != null && !campaignDetailLoading && (
+                <p className="text-amber-400 text-sm font-medium">Could not load campaign details.</p>
+              )}
+              {campaignDetail && !campaignDetailLoading && (
+                <>
+                  <div className="grid sm:grid-cols-2 gap-4">
+                    <div className="rounded-lg bg-surface-700/40 border border-white/[0.06] p-4">
+                      <p className="tactical-label text-neutral-500 normal-case mb-1">Name</p>
+                      <p className="text-neutral-100 font-medium">{campaignDetail.name}</p>
+                    </div>
+                    <div className="rounded-lg bg-surface-700/40 border border-white/[0.06] p-4">
+                      <p className="tactical-label text-neutral-500 normal-case mb-1">Status</p>
+                      <span
+                        className={`inline-flex px-2 py-0.5 text-xs font-semibold rounded uppercase tracking-wider text-white ${
+                          statusColors[campaignDetail.status] || 'bg-neutral-600'
+                        }`}
+                      >
+                        {campaignDetail.status}
+                      </span>
+                    </div>
+                    <div className="sm:col-span-2 rounded-lg bg-surface-700/40 border border-white/[0.06] p-4">
+                      <p className="tactical-label text-neutral-500 normal-case mb-1">Email subject</p>
+                      <p className="text-neutral-100 font-medium">{campaignDetail.subject}</p>
+                    </div>
+                    <div className="rounded-lg bg-surface-700/40 border border-white/[0.06] p-4">
+                      <p className="tactical-label text-neutral-500 normal-case mb-1">List</p>
+                      <p className="text-neutral-100 font-medium">
+                        {campaignDetail.list?.name ?? '—'}
+                        {campaignDetail.list?.contactCount != null ? (
+                          <span className="text-neutral-500 font-normal"> ({campaignDetail.list.contactCount} contacts)</span>
+                        ) : null}
+                      </p>
+                    </div>
+                    <div className="rounded-lg bg-surface-700/40 border border-white/[0.06] p-4">
+                      <p className="tactical-label text-neutral-500 normal-case mb-1">Template</p>
+                      <p className="text-neutral-100 font-medium">{campaignDetail.template?.name ?? '— (custom HTML only)'}</p>
+                    </div>
+                    <div className="rounded-lg bg-surface-700/40 border border-white/[0.06] p-4">
+                      <p className="tactical-label text-neutral-500 normal-case mb-1">Reply-To</p>
+                      <p className="text-neutral-100 font-mono text-sm break-all">
+                        {campaignDetail.metadata?.replyTo?.trim() || '—'}
+                      </p>
+                    </div>
+                    <div className="rounded-lg bg-surface-700/40 border border-white/[0.06] p-4">
+                      <p className="tactical-label text-neutral-500 normal-case mb-1">Scheduled send</p>
+                      <p className="text-neutral-200 text-sm">{formatCampaignDate(campaignDetail.scheduledAt)}</p>
+                    </div>
+                    <div className="rounded-lg bg-surface-700/40 border border-white/[0.06] p-4">
+                      <p className="tactical-label text-neutral-500 normal-case mb-1">Started / completed</p>
+                      <p className="text-neutral-400 text-sm">
+                        {formatCampaignDate(campaignDetail.startedAt)} → {formatCampaignDate(campaignDetail.completedAt)}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="rounded-lg bg-surface-700/40 border border-white/[0.06] p-4">
+                    <p className="tactical-label text-neutral-500 normal-case mb-2">Attachments (as submitted)</p>
+                    {campaignDetail.metadata?.attachments && campaignDetail.metadata.attachments.length > 0 ? (
+                      <ul className="space-y-2 text-sm">
+                        {campaignDetail.metadata.attachments.map((a, i) => (
+                          <li key={`${a.filename}-${i}`} className="flex flex-wrap gap-2 text-neutral-200 font-sans">
+                            <span className="font-medium">{a.filename}</span>
+                            <span className="text-neutral-500 font-mono text-xs">{a.contentType || 'application/octet-stream'}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="text-neutral-500 text-sm">None</p>
+                    )}
+                  </div>
+
+                  <div className="rounded-lg bg-surface-700/40 border border-white/[0.06] p-4">
+                    <p className="tactical-label text-neutral-500 normal-case mb-2">Email body</p>
+                    {campaignDetail.metadata?.htmlContent?.trim() ? (
+                      <>
+                        <p className="text-xs text-neutral-500 mb-2 font-sans">Custom HTML (submitted in the form)</p>
+                        <div
+                          className="max-h-72 overflow-auto rounded border border-white/10 bg-white text-neutral-900 p-3 text-sm leading-relaxed break-words [&_a]:text-blue-700 [&_img]:max-w-full"
+                          dangerouslySetInnerHTML={{ __html: campaignDetail.metadata.htmlContent }}
+                        />
+                      </>
+                    ) : campaignDetail.template?.htmlContent?.trim() ? (
+                      <>
+                        <p className="text-xs text-neutral-500 mb-2 font-sans">
+                          From template “{campaignDetail.template.name}” (stored HTML at send time)
+                        </p>
+                        <div
+                          className="max-h-72 overflow-auto rounded border border-white/10 bg-white text-neutral-900 p-3 text-sm leading-relaxed break-words [&_a]:text-blue-700 [&_img]:max-w-full"
+                          dangerouslySetInnerHTML={{ __html: campaignDetail.template.htmlContent }}
+                        />
+                      </>
+                    ) : (
+                      <p className="text-neutral-500 text-sm">No HTML stored on this campaign (minimal placeholder may be used at send).</p>
+                    )}
+                  </div>
+
+                  <div className="rounded-lg bg-surface-700/40 border border-white/[0.06] p-4">
+                    <p className="tactical-label text-neutral-500 normal-case mb-3">Send progress</p>
+                    <div className="flex flex-wrap gap-4 text-sm">
+                      <span className="text-emerald-400 font-medium">{campaignDetail.sentCount} sent</span>
+                      {(campaignDetail.failedCount ?? 0) > 0 && (
+                        <span className="text-red-400 font-medium">{campaignDetail.failedCount} failed</span>
+                      )}
+                      {(campaignDetail.pendingCount ?? 0) > 0 && (
+                        <span className="text-amber-400 font-medium">{campaignDetail.pendingCount} pending</span>
+                      )}
+                      <span className="text-neutral-500">/ {campaignDetail.totalRecipients} recipients</span>
+                    </div>
+                    {campaignDetail.recipientStatusCounts && Object.keys(campaignDetail.recipientStatusCounts).length > 0 ? (
+                      <div className="mt-3 flex flex-wrap gap-2 text-xs text-neutral-400 font-mono">
+                        {Object.entries(campaignDetail.recipientStatusCounts).map(([k, v]) => (
+                          <span key={k} className="rounded bg-surface-800 px-2 py-0.5">
+                            {k}: {v}
+                          </span>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-white/[0.08]">
+                    {campaignDetail.status === 'DRAFT' && (
+                      <button
+                        type="button"
+                        onClick={() => handleStart(campaignDetail.id)}
+                        disabled={startingId === campaignDetail.id || startCampaign.isLoading}
+                        className="tactical-btn-primary px-4 py-2 text-sm rounded disabled:opacity-50"
+                      >
+                        {startingId === campaignDetail.id ? 'Starting…' : 'Start sending'}
+                      </button>
+                    )}
+                    {(campaignDetail.status === 'QUEUED' || campaignDetail.status === 'SENDING') && (
+                      <button
+                        type="button"
+                        onClick={() => pauseCampaign.mutate(campaignDetail.id)}
+                        disabled={pauseCampaign.isLoading}
+                        className="px-4 py-2 bg-orange-600 hover:bg-orange-500 text-white text-sm font-medium rounded-lg disabled:opacity-50"
+                      >
+                        Pause
+                      </button>
+                    )}
+                    {campaignDetail.status === 'PAUSED' && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => resumeCampaign.mutate(campaignDetail.id)}
+                          disabled={resumeCampaign.isLoading}
+                          className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-medium rounded-lg disabled:opacity-50"
+                        >
+                          Resume
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setViewCampaignId(null);
+                            setEditingCampaign({
+                              id: campaignDetail.id,
+                              name: campaignDetail.name,
+                              subject: campaignDetail.subject,
+                            });
+                            setEditName(campaignDetail.name);
+                            setEditSubject(campaignDetail.subject);
+                            setEditError('');
+                          }}
+                          className="tactical-btn-ghost px-4 py-2 text-sm rounded"
+                        >
+                          Edit name &amp; subject
+                        </button>
+                      </>
+                    )}
+                    {campaignDetail.status !== 'QUEUED' && campaignDetail.status !== 'SENDING' && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (
+                            window.confirm(
+                              'Delete this campaign? This cannot be undone. Lists and contacts are not deleted.'
+                            )
+                          ) {
+                            deleteCampaign.mutate(campaignDetail.id);
+                          }
+                        }}
+                        disabled={deleteCampaign.isLoading}
+                        className="px-4 py-2 bg-red-600 hover:bg-red-500 text-white text-sm font-medium rounded-lg disabled:opacity-50 sm:ml-auto"
+                      >
+                        {deleteCampaign.isLoading ? 'Deleting…' : 'Delete campaign'}
+                      </button>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {editingCampaign && (
         <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/60 p-4" onClick={() => setEditingCampaign(null)}>
           <div className="tactical-card border-t-2 border-t-primary-500/50 rounded-lg w-full max-w-md p-6" onClick={(e) => e.stopPropagation()}>

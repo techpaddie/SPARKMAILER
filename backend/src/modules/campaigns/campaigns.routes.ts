@@ -9,8 +9,13 @@ router.use(authMiddleware, licenseValidationMiddleware);
 
 router.get('/', campaignsController.list);
 router.get('/:id', campaignsController.getOne);
-router.post('/', quotaCheckMiddleware('campaign'), campaignsController.create);
-router.post('/:id/start', quotaCheckMiddleware('email'), campaignsController.startCampaign);
+router.post('/', campaignsController.create);
+router.post(
+  '/:id/start',
+  quotaCheckMiddleware('campaign'),
+  quotaCheckMiddleware('email'),
+  campaignsController.startCampaign
+);
 router.post('/:id/pause', campaignsController.pauseCampaign);
 router.post('/:id/resume', quotaCheckMiddleware('email'), campaignsController.resumeCampaign);
 router.patch('/:id', campaignsController.updateCampaign);

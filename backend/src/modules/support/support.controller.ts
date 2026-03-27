@@ -171,46 +171,52 @@ export async function createTicket(req: AuthenticatedRequest, res: Response) {
     return;
   }
 
-  const ticket = await prisma.supportTicket.create({
-    data: {
-      userId: req.user!.id,
-      subject,
-      category: category || null,
-      priority: priority ?? 'MEDIUM',
-      status: 'OPEN',
-      lastMessageAt: new Date(),
-      messages: {
-        create: {
-          authorType: 'USER',
-          authorId: req.user!.id,
-          authorEmail: req.user!.email,
-          authorName: null,
-          body: content.message,
-          attachments: attachments?.length ? attachments : undefined,
+  const [ticket, ticketAuthor] = await Promise.all([
+    prisma.supportTicket.create({
+      data: {
+        userId: req.user!.id,
+        subject,
+        category: category || null,
+        priority: priority ?? 'MEDIUM',
+        status: 'OPEN',
+        lastMessageAt: new Date(),
+        messages: {
+          create: {
+            authorType: 'USER',
+            authorId: req.user!.id,
+            authorEmail: req.user!.email,
+            authorName: null,
+            body: content.message,
+            attachments: attachments?.length ? attachments : undefined,
+          },
         },
       },
-    },
-    include: {
-      messages: {
-        orderBy: { createdAt: 'asc' },
-        select: {
-          id: true,
-          authorType: true,
-          authorEmail: true,
-          authorName: true,
-          body: true,
-          attachments: true,
-          createdAt: true,
+      include: {
+        messages: {
+          orderBy: { createdAt: 'asc' },
+          select: {
+            id: true,
+            authorType: true,
+            authorEmail: true,
+            authorName: true,
+            body: true,
+            attachments: true,
+            createdAt: true,
+          },
         },
       },
-    },
-  });
+    }),
+    prisma.user.findUnique({
+      where: { id: req.user!.id },
+      select: { name: true },
+    }),
+  ]);
 
   sendNewTicketAdminNotification({
     ticketId: ticket.id,
     subject,
     userEmail: req.user!.email,
-    userName: req.user!.name ?? null,
+    userName: ticketAuthor?.name ?? null,
     messagePreview: content.message,
     category: category || null,
     priority: priority ?? 'MEDIUM',

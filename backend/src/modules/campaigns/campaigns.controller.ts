@@ -2,6 +2,7 @@ import { Response } from 'express';
 import { z } from 'zod';
 import { prisma } from '../../utils/prisma';
 import { addEmailJob } from '../../queue/email.queue';
+import { licenseService } from '../../services/license.service';
 import type { AuthenticatedRequest } from '../../middleware/types';
 
 const attachmentSchema = z.object({
@@ -123,8 +124,8 @@ export async function getOne(req: AuthenticatedRequest, res: Response) {
   const campaign = await prisma.campaign.findFirst({
     where: { id, userId: req.user!.id },
     include: {
-      list: { select: { name: true } },
-      template: { select: { name: true } },
+      list: { select: { id: true, name: true, contactCount: true } },
+      template: { select: { id: true, name: true, htmlContent: true } },
       _count: { select: { recipients: true } },
     },
   });
@@ -141,8 +142,12 @@ export async function getOne(req: AuthenticatedRequest, res: Response) {
   recipientCounts.forEach((r) => {
     byStatus[r.status] = r._count;
   });
+  const failedCount = byStatus.FAILED ?? 0;
+  const pendingCount = byStatus.PENDING ?? 0;
   res.json({
     ...campaign,
+    failedCount,
+    pendingCount,
     recipientStatusCounts: byStatus,
   });
 }
@@ -158,6 +163,8 @@ export async function startCampaign(req: AuthenticatedRequest, res: Response) {
     res.status(404).json({ error: 'Campaign not found' });
     return;
   }
+
+  const countAsNewRun = campaign.status === 'DRAFT';
 
   if (campaign.status !== 'DRAFT' && campaign.status !== 'QUEUED') {
     res.status(400).json({ error: 'Campaign cannot be started' });
@@ -211,6 +218,10 @@ export async function startCampaign(req: AuthenticatedRequest, res: Response) {
     where: { id },
     data: { status: 'SENDING', startedAt: new Date() },
   });
+
+  if (countAsNewRun && req.user!.licenseId) {
+    await licenseService.incrementCampaignUsage(req.user!.id, req.user!.licenseId);
+  }
 
   res.json({ success: true, queued: recipients.length });
 }

@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../services/api';
 import Icon from '../../components/Icon';
+import { ScrollableListRegion } from '../../components/ScrollableListRegion';
 
 type License = {
   id: string;
@@ -184,12 +185,7 @@ export default function AdminLicensesPage() {
           {isLoading ? (
             <div className="p-12 text-center text-neutral-500 font-medium">Loading...</div>
           ) : (
-            <div
-              className="w-full overflow-x-auto overflow-y-visible"
-              style={{ WebkitOverflowScrolling: 'touch' }}
-              role="region"
-              aria-label="License list table - scroll horizontally on small screens"
-            >
+            <ScrollableListRegion ariaLabel="License list">
               <table className="w-full min-w-[900px] table-fixed border-collapse">
                 <colgroup>
                   <col style={{ width: '32%' }} />
@@ -199,8 +195,8 @@ export default function AdminLicensesPage() {
                   <col style={{ width: '18%' }} />
                   <col style={{ width: '8%' }} />
                 </colgroup>
-                <thead>
-                  <tr className="border-b border-white/[0.08]">
+                <thead className="sticky top-0 z-10 bg-surface-900/95 backdrop-blur-sm border-b border-white/[0.08]">
+                  <tr>
                     <th className="text-left py-4 px-4 text-xs font-medium uppercase tracking-wider text-neutral-500 font-sans normal-case whitespace-nowrap">Key</th>
                     <th className="text-left py-4 px-4 text-xs font-medium uppercase tracking-wider text-neutral-500 font-sans normal-case whitespace-nowrap">Status</th>
                     <th className="text-left py-4 px-4 text-xs font-medium uppercase tracking-wider text-neutral-500 font-sans normal-case whitespace-nowrap">Expires</th>
@@ -280,7 +276,7 @@ export default function AdminLicensesPage() {
                   })}
                 </tbody>
               </table>
-            </div>
+            </ScrollableListRegion>
           )}
           {!isLoading && filtered.length === 0 && (
             <div className="p-12 text-center text-neutral-500 font-medium">No licenses match the selected filter.</div>
