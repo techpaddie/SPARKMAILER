@@ -18,7 +18,7 @@ export default function LoginPage() {
     {
       onSuccess: (data) => {
         setAuth(data.accessToken, data.refreshToken, data.user);
-        navigate(data.user?.role === 'ADMIN' ? '/admin' : '/');
+        navigate('/');
       },
     }
   );

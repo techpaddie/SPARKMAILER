@@ -58,6 +58,7 @@ api.interceptors.response.use(
     const requestUrl = String(original?.url ?? '');
     const isAuthRequest =
       requestUrl.includes('/auth/login') ||
+      requestUrl.includes('/auth/admin/login') ||
       requestUrl.includes('/auth/activate') ||
       requestUrl.includes('/auth/refresh');
 

@@ -16,12 +16,7 @@ export default function AdminLoginPage() {
     setLoading(true);
     setError('');
     try {
-      const { data } = await api.post('/auth/login', { email, password });
-      if (data.user?.role !== 'ADMIN') {
-        setError('Admin access only. Use the main app for user accounts.');
-        setLoading(false);
-        return;
-      }
+      const { data } = await api.post('/auth/admin/login', { email: email.trim().toLowerCase(), password: password.trim() });
       setAuth(data.accessToken, data.refreshToken, data.user);
       navigate('/admin', { replace: true });
     } catch (err: unknown) {

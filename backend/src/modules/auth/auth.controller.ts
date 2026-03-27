@@ -151,6 +151,43 @@ export async function activate(req: Request, res: Response) {
   }
 }
 
+async function authenticateWithPassword(email: string, password: string) {
+  const user = await prisma.user.findFirst({
+    where: { email: { equals: email.trim(), mode: 'insensitive' } },
+  });
+  if (!user || !(await bcrypt.compare(password, user.passwordHash))) {
+    return null;
+  }
+  if (user.status === 'SUSPENDED' || user.status === 'REVOKED') {
+    return { suspended: true as const };
+  }
+  return { user };
+}
+
+function issueSessionTokens(user: { id: string; email: string; name: string | null; role: string; licenseId: string | null; status: string }) {
+  const accessToken = jwt.sign(
+    {
+      userId: user.id,
+      email: user.email,
+      role: user.role,
+      licenseId: user.licenseId,
+      status: user.status,
+      type: 'access',
+    },
+    env.JWT_SECRET,
+    { expiresIn: env.JWT_ACCESS_EXPIRY } as jwt.SignOptions
+  );
+
+  const refreshToken = jwt.sign(
+    { userId: user.id, type: 'refresh' },
+    env.JWT_REFRESH_SECRET,
+    { expiresIn: env.JWT_REFRESH_EXPIRY } as jwt.SignOptions
+  );
+
+  return { accessToken, refreshToken };
+}
+
+/** User portal: only non-admin accounts may obtain tokens here. */
 export async function login(req: Request, res: Response) {
   try {
     const parsed = loginSchema.safeParse(req.body);
@@ -160,17 +197,19 @@ export async function login(req: Request, res: Response) {
     }
 
     const { email, password } = parsed.data;
-    const user = await prisma.user.findFirst({
-      where: { email: { equals: email.trim(), mode: 'insensitive' } },
-    });
-
-    if (!user || !(await bcrypt.compare(password, user.passwordHash))) {
+    const result = await authenticateWithPassword(email, password);
+    if (!result) {
       res.status(401).json({ error: 'Invalid email or password' });
       return;
     }
-
-    if (user.status === 'SUSPENDED' || user.status === 'REVOKED') {
+    if ('suspended' in result) {
       res.status(403).json({ error: 'Account is suspended or revoked' });
+      return;
+    }
+
+    const { user } = result;
+    if (user.role === 'ADMIN') {
+      res.status(401).json({ error: 'Invalid email or password' });
       return;
     }
 
@@ -179,24 +218,7 @@ export async function login(req: Request, res: Response) {
       data: { lastLoginAt: new Date() },
     });
 
-    const accessToken = jwt.sign(
-      {
-        userId: user.id,
-        email: user.email,
-        role: user.role,
-        licenseId: user.licenseId,
-        status: user.status,
-        type: 'access',
-      },
-      env.JWT_SECRET,
-      { expiresIn: env.JWT_ACCESS_EXPIRY } as jwt.SignOptions
-    );
-
-    const refreshToken = jwt.sign(
-      { userId: user.id, type: 'refresh' },
-      env.JWT_REFRESH_SECRET,
-      { expiresIn: env.JWT_REFRESH_EXPIRY } as jwt.SignOptions
-    );
+    const { accessToken, refreshToken } = issueSessionTokens(user);
 
     res.json({
       user: {
@@ -212,6 +234,57 @@ export async function login(req: Request, res: Response) {
     });
   } catch (err) {
     console.error('[Auth] login error:', err);
+    res.status(500).json({ error: err instanceof Error ? err.message : 'Login failed' });
+  }
+}
+
+/** Admin portal: only ADMIN accounts may obtain tokens here. */
+export async function adminLogin(req: Request, res: Response) {
+  try {
+    const parsed = loginSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: formatZodError(parsed.error) });
+      return;
+    }
+
+    const { email, password } = parsed.data;
+    const result = await authenticateWithPassword(email, password);
+    if (!result) {
+      res.status(401).json({ error: 'Invalid email or password' });
+      return;
+    }
+    if ('suspended' in result) {
+      res.status(403).json({ error: 'Account is suspended or revoked' });
+      return;
+    }
+
+    const { user } = result;
+    if (user.role !== 'ADMIN') {
+      res.status(401).json({ error: 'Invalid email or password' });
+      return;
+    }
+
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { lastLoginAt: new Date() },
+    });
+
+    const { accessToken, refreshToken } = issueSessionTokens(user);
+
+    res.json({
+      user: {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        role: user.role,
+        licenseId: user.licenseId,
+      },
+      accessToken,
+      refreshToken,
+      expiresIn: env.JWT_ACCESS_EXPIRY,
+    });
+  } catch (err) {
+    console.error('[Auth] adminLogin error:', err);
     res.status(500).json({ error: err instanceof Error ? err.message : 'Login failed' });
   }
 }
