@@ -118,9 +118,10 @@ export function buildProtectiveHeaders(input: ProtectiveHeadersInput): Protectiv
   const headers: Record<string, string> = {
     'Message-ID': messageId,
     Date: new Date().toUTCString(),
-    'X-Mailer': 'SparkMailer',
+    'MIME-Version': '1.0',
     'X-Auto-Response-Suppress': 'All',
-    'List-ID': safeHeaderValue(listId),
+    Precedence: 'bulk',
+    'List-ID': safeHeaderValue(`<${listId}>`),
     'Feedback-ID': safeHeaderValue(feedbackId),
     'List-Unsubscribe': `<${unsubscribeUrl}>`,
     'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
