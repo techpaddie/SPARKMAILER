@@ -3,6 +3,8 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../services/api';
 import Icon from '../components/Icon';
 import { ScrollableListRegion } from '../components/ScrollableListRegion';
+import DeliverabilityChecklist from '../components/DeliverabilityChecklist';
+import EspSmtpGuidance from '../components/EspSmtpGuidance';
 
 type SmtpServerItem = {
   id: string;
@@ -164,12 +166,13 @@ function smtpStatusBadge(server: SmtpServerItem) {
   };
 }
 
-type SettingsTab = 'account' | 'smtp' | 'delivery' | 'integrations';
+type SettingsTab = 'account' | 'smtp' | 'delivery' | 'deliverability' | 'integrations';
 
 const TABS: { id: SettingsTab; label: string; icon: string }[] = [
   { id: 'account', label: 'Account', icon: 'person' },
   { id: 'smtp', label: 'SMTP Configuration', icon: 'dns' },
   { id: 'delivery', label: 'Email Delivery Settings', icon: 'send' },
+  { id: 'deliverability', label: 'Deliverability', icon: 'shield' },
   { id: 'integrations', label: 'Integrations & Limits', icon: 'api' },
 ];
 
@@ -221,6 +224,7 @@ export default function SettingsPage() {
       onSuccess: () => {
         queryClient.invalidateQueries(['smtp-servers']);
         queryClient.invalidateQueries(['dashboard-stats']);
+        queryClient.invalidateQueries(['deliverability-summary']);
         setSmtpForm({ name: '', host: '', port: '587', secure: false, username: '', password: '', fromEmail: '', fromName: '', weight: '10', sendDelayMs: '0', maxSendsPerMinute: '0' });
         setSmtpError('');
       },
@@ -239,6 +243,7 @@ export default function SettingsPage() {
       onSuccess: () => {
         queryClient.invalidateQueries(['smtp-servers']);
         queryClient.invalidateQueries(['dashboard-stats']);
+        queryClient.invalidateQueries(['deliverability-summary']);
         setEditingSmtpId(null);
         setSmtpForm({ name: '', host: '', port: '587', secure: false, username: '', password: '', fromEmail: '', fromName: '', weight: '10', sendDelayMs: '0', maxSendsPerMinute: '0' });
         setSmtpError('');
@@ -254,7 +259,13 @@ export default function SettingsPage() {
   );
   const deleteSmtp = useMutation(
     (id: string) => api.delete(`/smtp-servers/${id}`),
-    { onSuccess: () => { queryClient.invalidateQueries(['smtp-servers']); queryClient.invalidateQueries(['dashboard-stats']); } }
+    {
+      onSuccess: () => {
+        queryClient.invalidateQueries(['smtp-servers']);
+        queryClient.invalidateQueries(['dashboard-stats']);
+        queryClient.invalidateQueries(['deliverability-summary']);
+      },
+    }
   );
 
   const patchSmtpQuick = useMutation(
@@ -297,6 +308,7 @@ export default function SettingsPage() {
       onSuccess: () => {
         queryClient.invalidateQueries(['smtp-servers']);
         queryClient.invalidateQueries(['dashboard-stats']);
+        queryClient.invalidateQueries(['deliverability-summary']);
         setSmtpError('');
       },
       onError: (err: { response?: { data?: { error?: string } } }) => {
@@ -346,7 +358,7 @@ export default function SettingsPage() {
       <div className="max-w-6xl mx-auto">
         <h1 className="tactical-heading text-2xl">Settings</h1>
         <p className="tactical-label mb-6 normal-case text-neutral-500">
-          Manage account, SMTP, delivery settings, and integrations.
+          Manage account, SMTP, delivery, deliverability, and integrations.
         </p>
 
         {/* Tab bar */}
@@ -779,6 +791,31 @@ export default function SettingsPage() {
             </div>
           </div>
         </section>
+        )}
+
+        {activeTab === 'deliverability' && (
+        <div className="space-y-6">
+          <section className="tactical-card rounded-xl border-t-2 border-t-primary-500/40 p-6">
+            <h2 className="font-heading text-lg font-semibold text-neutral-100 mb-2 flex items-center gap-2 tracking-tight">
+              <Icon name="shield" size={20} className="text-primary-500/80" /> Inbox &amp; authentication
+            </h2>
+            <p className="text-neutral-500 text-sm mb-6 leading-relaxed">
+              Inbox placement depends on DNS (SPF, DMARC, DKIM at your mail host), list quality, and sending reputation.
+              The checklist below queries public DNS for each unique domain in your SMTP <strong className="text-neutral-400 font-medium">From</strong> addresses.
+            </p>
+            <DeliverabilityChecklist />
+          </section>
+
+          <section className="tactical-card rounded-xl border-t-2 border-t-cyan-500/30 p-6">
+            <h2 className="font-heading text-lg font-semibold text-neutral-100 mb-2 flex items-center gap-2 tracking-tight">
+              <Icon name="compare_arrows" size={20} className="text-cyan-400/80" /> SMTP vs ESP (Mailgun-style)
+            </h2>
+            <p className="text-neutral-500 text-sm mb-4">
+              Choose the right pipe for bulk marketing: raw SMTP through your host vs provider APIs with event webhooks.
+            </p>
+            <EspSmtpGuidance />
+          </section>
+        </div>
         )}
 
         {activeTab === 'integrations' && (

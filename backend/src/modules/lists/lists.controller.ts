@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { Prisma } from '@prisma/client';
 import { prisma } from '../../utils/prisma';
 import type { AuthenticatedRequest } from '../../middleware/types';
+import { parseImportEmailCandidates } from '../../utils/email-import-validation';
 
 const createListSchema = z.object({
   name: z.string().min(1),
@@ -10,7 +11,7 @@ const createListSchema = z.object({
 });
 
 const importEmailsSchema = z.object({
-  emails: z.array(z.string().email()).min(1),
+  emails: z.array(z.string()).min(1).max(100_000),
 });
 
 export async function list(req: AuthenticatedRequest, res: Response) {
@@ -106,29 +107,29 @@ export async function importEmails(req: AuthenticatedRequest, res: Response) {
   }
   const parsed = importEmailsSchema.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ error: 'Invalid emails array' });
+    res.status(400).json({ error: 'Invalid emails array (max 100,000 strings)' });
     return;
   }
-  const normalized = [...new Set(parsed.data.emails.map((e) => e.trim().toLowerCase()))];
+  const { validEmails, skippedInvalid, invalidSamples } = parseImportEmailCandidates(parsed.data.emails);
   let added = 0;
-  for (const email of normalized) {
-    try {
-      await prisma.contact.upsert({
-        where: { listId_email: { listId: id, email } },
-        create: { listId: id, email },
-        update: {},
-      });
-      added += 1;
-    } catch {
-      // skip duplicate
-    }
+  if (validEmails.length > 0) {
+    const result = await prisma.contact.createMany({
+      data: validEmails.map((email) => ({ listId: id, email })),
+      skipDuplicates: true,
+    });
+    added = result.count;
   }
   const count = await prisma.contact.count({ where: { listId: id } });
   await prisma.list.update({
     where: { id },
     data: { contactCount: count },
   });
-  res.json({ added, total: count });
+  res.json({
+    added,
+    total: count,
+    skippedInvalid,
+    invalidSamples,
+  });
 }
 
 export async function importFromFile(req: AuthenticatedRequest, res: Response) {
@@ -151,39 +152,38 @@ export async function importFromFile(req: AuthenticatedRequest, res: Response) {
     const workbook = XLSX.read(file.buffer, { type: 'buffer' });
     const sheet = workbook.Sheets[workbook.SheetNames[0]];
     const rows = XLSX.utils.sheet_to_json<string[]>(sheet, { header: 1 });
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     for (const row of rows) {
       const values = Array.isArray(row) ? row : Object.values(row);
       for (const v of values) {
-        const s = String(v ?? '').trim().toLowerCase();
-        if (emailRegex.test(s)) emails.push(s);
+        const s = String(v ?? '').trim();
+        if (s) emails.push(s);
       }
     }
-    emails = [...new Set(emails)];
   } catch (err) {
     console.error('[Lists] importFromFile parse error:', err);
     res.status(400).json({ error: 'Failed to parse file. Use Excel (.xlsx) or CSV.' });
     return;
   }
+  const { validEmails, skippedInvalid, invalidSamples } = parseImportEmailCandidates(emails);
   let added = 0;
-  for (const email of emails) {
-    try {
-      await prisma.contact.upsert({
-        where: { listId_email: { listId: id, email } },
-        create: { listId: id, email },
-        update: {},
-      });
-      added += 1;
-    } catch {
-      // skip duplicate
-    }
+  if (validEmails.length > 0) {
+    const result = await prisma.contact.createMany({
+      data: validEmails.map((email) => ({ listId: id, email })),
+      skipDuplicates: true,
+    });
+    added = result.count;
   }
   const count = await prisma.contact.count({ where: { listId: id } });
   await prisma.list.update({
     where: { id },
     data: { contactCount: count },
   });
-  res.json({ added, total: count });
+  res.json({
+    added,
+    total: count,
+    skippedInvalid,
+    invalidSamples,
+  });
 }
 
 export async function removeContact(req: AuthenticatedRequest, res: Response) {

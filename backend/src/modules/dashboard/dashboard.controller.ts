@@ -95,6 +95,8 @@ export async function getTracking(req: AuthenticatedRequest, res: Response) {
     suppressionCounts.map((item) => [String(item.reason ?? '').toLowerCase(), item._count])
   ) as Record<string, number>;
 
+  const mailgunWebhooksConfigured = Boolean(env.MAILGUN_API_KEY?.trim() && env.MAILGUN_DOMAIN?.trim());
+
   const summary = {
     unsubscribes: countByReason.unsubscribe ?? 0,
     bounces: (countByReason.bounce ?? 0) + (countByReason.bounced ?? 0) + (countByReason.failed ?? 0),
@@ -102,8 +104,27 @@ export async function getTracking(req: AuthenticatedRequest, res: Response) {
     suppressed: suppressedTotal,
   };
 
+  const deliveryContext = {
+    mailgunWebhooksConfigured,
+    /** True when some events likely came from provider webhooks (post-accept). */
+    hasProviderAttributedEvents: recentEvents.some(
+      (e) =>
+        e.eventType === 'BOUNCED' &&
+        ((e.metadata as { source?: string } | null)?.source === 'mailgun' ||
+          (e.metadata as { providerEvent?: string } | null)?.providerEvent != null)
+    ),
+    labels: {
+      bouncesShort: mailgunWebhooksConfigured
+        ? 'Post-accept bounces & failures (webhook-backed when Mailgun reports them)'
+        : 'Bounces & delivery failures (limited without Mailgun webhooks)',
+      bouncesDetail:
+        '“Sent” in campaigns means your SMTP accepted the message. Inbox placement and later bounces are separate. When Mailgun is configured and webhooks fire, this table can show provider-reported bounces after acceptance.',
+    },
+  };
+
   res.json({
     summary,
+    deliveryContext,
     recentUnsubscribes: recentEvents
       .filter((event) => event.eventType === 'UNSUBSCRIBED')
       .map((event) => ({

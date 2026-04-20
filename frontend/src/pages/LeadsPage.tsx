@@ -10,45 +10,16 @@ type Contact = { id: string; email: string; firstName?: string | null; lastName?
 type SelectedList = List & { contacts: Contact[] };
 type ImportSource = 'paste' | 'file';
 
-const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
-function normalizeEmail(value: string): string {
-  return value.trim().toLowerCase();
-}
-
 function pluralize(count: number, singular: string, plural = `${singular}s`): string {
   return `${count} ${count === 1 ? singular : plural}`;
 }
 
-function validateEmails(
-  candidates: string[],
-  existingEmails: Set<string>
-): { validEmails: string[]; invalidCount: number; duplicateCount: number } {
-  const seen = new Set<string>();
-  const validEmails: string[] = [];
-  let invalidCount = 0;
-  let duplicateCount = 0;
-
-  for (const candidate of candidates) {
-    const email = normalizeEmail(candidate);
-    if (!email) continue;
-
-    if (!EMAIL_REGEX.test(email)) {
-      invalidCount += 1;
-      continue;
-    }
-
-    if (seen.has(email) || existingEmails.has(email)) {
-      duplicateCount += 1;
-      continue;
-    }
-
-    seen.add(email);
-    validEmails.push(email);
-  }
-
-  return { validEmails, invalidCount, duplicateCount };
-}
+type ImportApiResponse = {
+  added: number;
+  total: number;
+  skippedInvalid?: number;
+  invalidSamples?: string[];
+};
 
 async function extractEmailsFromFile(file: File): Promise<string[]> {
   const lowerName = file.name.toLowerCase();
@@ -78,20 +49,23 @@ async function extractEmailsFromFile(file: File): Promise<string[]> {
   return emails;
 }
 
-function buildImportNotice(addedCount: number, invalidCount: number, duplicateCount: number): string {
-  const parts = [`Imported ${pluralize(addedCount, 'email')}`];
-  if (invalidCount > 0) parts.push(`skipped ${pluralize(invalidCount, 'invalid email', 'invalid emails')}`);
-  if (duplicateCount > 0) parts.push(`removed ${pluralize(duplicateCount, 'duplicate')}`);
-  return `${parts.join(', ')}.`;
-}
-
-function buildNoImportError(invalidCount: number, duplicateCount: number): string {
-  const skipped: string[] = [];
-  if (invalidCount > 0) skipped.push(pluralize(invalidCount, 'invalid email', 'invalid emails'));
-  if (duplicateCount > 0) skipped.push(pluralize(duplicateCount, 'duplicate'));
-
-  if (skipped.length === 0) return 'No new valid email addresses found.';
-  return `No new valid email addresses found. Skipped ${skipped.join(' and ')}.`;
+function buildImportNotice(d: ImportApiResponse): string {
+  const parts: string[] = [];
+  if (d.added > 0) {
+    parts.push(`Added ${pluralize(d.added, 'new contact')}`);
+  } else {
+    parts.push('No new contacts added');
+  }
+  if ((d.skippedInvalid ?? 0) > 0) {
+    parts.push(`skipped ${pluralize(d.skippedInvalid ?? 0, 'invalid address')}`);
+  }
+  parts.push(`list now has ${d.total.toLocaleString()} contacts`);
+  let s = `${parts.slice(0, -1).join(', ')} — ${parts[parts.length - 1]}.`;
+  if ((d.invalidSamples?.length ?? 0) > 0) {
+    s += ` Examples of rejected input: ${d.invalidSamples!.slice(0, 3).join('; ')}`;
+    if ((d.invalidSamples?.length ?? 0) > 3) s += '…';
+  }
+  return s;
 }
 
 function parseApiError(err: { response?: { data?: { error?: unknown } } }): string {
@@ -181,27 +155,14 @@ export default function LeadsPage() {
     }
   );
   const importEmails = useMutation(
-    ({
-      listId,
-      emails,
-    }: {
-      listId: string;
-      emails: string[];
-      source: ImportSource;
-      invalidCount: number;
-      duplicateCount: number;
-    }) => api.post(`/lists/${listId}/import`, { emails }),
+    (payload: { listId: string; emails: string[]; source: ImportSource }) =>
+      api.post<ImportApiResponse>(`/lists/${payload.listId}/import`, { emails: payload.emails }),
     {
-      onSuccess: (response, { listId, emails, source, invalidCount, duplicateCount }) => {
+      onSuccess: (response, { listId, source }) => {
         queryClient.invalidateQueries(['lists']);
         queryClient.invalidateQueries(['list', listId]);
-        const addedCount =
-          typeof (response as { data?: { added?: unknown } })?.data?.added === 'number'
-            ? (response as { data: { added: number } }).data.added
-            : emails.length;
-        const serverSkipped = Math.max(0, emails.length - addedCount);
-        const totalDuplicateCount = duplicateCount + serverSkipped;
-        const notice = buildImportNotice(addedCount, invalidCount, totalDuplicateCount);
+        const d = response.data;
+        const notice = buildImportNotice(d);
 
         if (source === 'paste') {
           setPasteText('');
@@ -212,8 +173,13 @@ export default function LeadsPage() {
           setImportFileNotice(notice);
         }
       },
-      onError: (err) => {
-        setImportError(parseApiError(err as Parameters<typeof parseApiError>[0]));
+      onError: (err, variables) => {
+        const msg = parseApiError(err as Parameters<typeof parseApiError>[0]);
+        if (variables.source === 'paste') {
+          setImportError(msg);
+        } else {
+          setImportFileError(msg);
+        }
       },
     }
   );
@@ -239,20 +205,15 @@ export default function LeadsPage() {
     }
     setImportError('');
     setImportNotice('');
-    const { validEmails, invalidCount, duplicateCount } = validateEmails(
-      pasteText.split(/[\n,;\s]+/),
-      existingEmails
-    );
-    if (validEmails.length === 0) {
-      setImportError(buildNoImportError(invalidCount, duplicateCount));
+    const tokens = pasteText.split(/[\n,;\s]+/).map((s) => s.trim()).filter(Boolean);
+    if (tokens.length === 0) {
+      setImportError('Paste at least one email address.');
       return;
     }
     importEmails.mutate({
       listId: selectedListId,
-      emails: validEmails,
+      emails: tokens,
       source: 'paste',
-      invalidCount,
-      duplicateCount,
     });
   };
 
@@ -269,20 +230,17 @@ export default function LeadsPage() {
 
     try {
       const extractedEmails = await extractEmailsFromFile(file);
-      const { validEmails, invalidCount, duplicateCount } = validateEmails(extractedEmails, existingEmails);
-
-      if (validEmails.length === 0) {
-        setImportFileError(buildNoImportError(invalidCount, duplicateCount));
+      const tokens = extractedEmails.map((s) => s.trim()).filter(Boolean);
+      if (tokens.length === 0) {
+        setImportFileError('No cells found. Put email addresses in the first column or anywhere in the sheet.');
         e.target.value = '';
         return;
       }
 
       importEmails.mutate({
         listId: selectedListId,
-        emails: validEmails,
+        emails: tokens,
         source: 'file',
-        invalidCount,
-        duplicateCount,
       });
     } catch {
       setImportFileError('Failed to read file. Use Excel (.xlsx, .xls) or CSV with email values.');
@@ -326,10 +284,6 @@ export default function LeadsPage() {
 
   const displayContacts = filteredContacts.slice(0, 100);
   const totalContacts = selectedList?.contacts?.length ?? 0;
-  const existingEmails = useMemo(
-    () => new Set((selectedList?.contacts ?? []).map((c: Contact) => normalizeEmail(c.email))),
-    [selectedList?.contacts]
-  );
   const importLoading = importEmails.isLoading;
 
   return (

@@ -35,8 +35,18 @@ type SuppressionItem = {
   createdAt: string;
 };
 
+type DeliveryContext = {
+  mailgunWebhooksConfigured: boolean;
+  hasProviderAttributedEvents: boolean;
+  labels: {
+    bouncesShort: string;
+    bouncesDetail: string;
+  };
+};
+
 type TrackingResponse = {
   summary: TrackingSummary;
+  deliveryContext?: DeliveryContext;
   recentUnsubscribes: TrackingEvent[];
   recentBounces: TrackingEvent[];
   recentSuppressions: SuppressionItem[];
@@ -118,6 +128,21 @@ export default function TrackingPage() {
           </div>
         </div>
 
+        {data?.deliveryContext && (
+          <div className="mb-6 rounded-lg border border-white/[0.08] bg-surface-800/50 px-4 py-3 text-sm text-neutral-400 leading-relaxed">
+            <p>
+              <strong className="text-neutral-300 font-medium">Delivery metrics:</strong>{' '}
+              {data.deliveryContext.labels.bouncesDetail}
+            </p>
+            {!data.deliveryContext.mailgunWebhooksConfigured && (
+              <p className="mt-2 text-amber-400/90">
+                Mailgun (or similar) is not configured for this deployment — post-accept bounces may not appear in Tracking. SMTP-only
+                sends still show as “sent” when the server accepts the message.
+              </p>
+            )}
+          </div>
+        )}
+
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
           <div className="tactical-card rounded-lg p-6 border-t-2 border-t-primary-500/40">
             <div className="flex items-center gap-2 tactical-label text-neutral-500 normal-case">
@@ -127,9 +152,14 @@ export default function TrackingPage() {
           </div>
           <div className="tactical-card rounded-lg p-6">
             <div className="flex items-center gap-2 tactical-label text-neutral-500 normal-case">
-              <Icon name="error" size={18} className="text-primary-500/70" /> Bounces
+              <Icon name="error" size={18} className="text-primary-500/70" /> Bounces &amp; failures
             </div>
             <p className="text-2xl font-heading font-bold text-amber-400 mt-2 tracking-tight">{summary.bounces}</p>
+            {data?.deliveryContext && (
+              <p className="text-xs text-neutral-500 mt-2 leading-snug" title={data.deliveryContext.labels.bouncesDetail}>
+                {data.deliveryContext.labels.bouncesShort}
+              </p>
+            )}
           </div>
           <div className="tactical-card rounded-lg p-6">
             <div className="flex items-center gap-2 tactical-label text-neutral-500 normal-case">
@@ -173,7 +203,7 @@ export default function TrackingPage() {
               {activeTab === 'unsubscribes'
                 ? 'Recent unsubscribes'
                 : activeTab === 'bounces'
-                  ? 'Recent bounce activity'
+                  ? 'Bounces & delivery failures'
                   : 'Suppression list'}
             </h2>
           </div>

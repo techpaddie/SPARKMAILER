@@ -13,6 +13,7 @@ import supportRoutes from './modules/support/support.routes';
 import templatesRoutes from './modules/templates/templates.routes';
 import smtpRoutes from './modules/smtp/smtp.routes';
 import dashboardRoutes from './modules/dashboard/dashboard.routes';
+import deliverabilityRoutes from './modules/deliverability/deliverability.routes';
 import unsubscribeRoutes from './modules/unsubscribe/unsubscribe.routes';
 import { mailgunBounceWebhook } from './modules/webhooks/webhooks.controller';
 
@@ -68,6 +69,7 @@ app.use('/api/support', supportRoutes);
 app.use('/api/templates', templatesRoutes);
 app.use('/api/smtp-servers', smtpRoutes);
 app.use('/api/dashboard', dashboardRoutes);
+app.use('/api/deliverability', deliverabilityRoutes);
 app.use('/unsubscribe', unsubscribeRoutes);
 app.post('/webhooks/mailgun/bounce', mailgunBounceWebhook);
 app.post('/webhooks/mailgun/events', mailgunBounceWebhook);
