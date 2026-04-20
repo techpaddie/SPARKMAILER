@@ -140,15 +140,19 @@ export async function update(req: AuthenticatedRequest, res: Response) {
   if (password) {
     updateData.passwordEnc = encrypt(password);
   }
+  /** Only keys present in the JSON body count (avoids treating omitted fields as updates). */
+  function bodyHas(key: keyof typeof rest): boolean {
+    return Object.prototype.hasOwnProperty.call(rest, key);
+  }
   const connectionTouched =
     password !== undefined ||
-    rest.host !== undefined ||
-    rest.port !== undefined ||
-    rest.username !== undefined ||
-    rest.secure !== undefined ||
-    rest.fromEmail !== undefined ||
-    rest.fromName !== undefined ||
-    rest.name !== undefined;
+    bodyHas('host') ||
+    bodyHas('port') ||
+    bodyHas('username') ||
+    bodyHas('secure') ||
+    bodyHas('fromEmail') ||
+    bodyHas('fromName') ||
+    bodyHas('name');
 
   const server = await prisma.smtpServer.update({
     where: { id },

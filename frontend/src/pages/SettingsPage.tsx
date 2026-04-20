@@ -444,7 +444,7 @@ export default function SettingsPage() {
                           className="rounded border-white/20 bg-surface-700 text-primary-500 focus:ring-primary-500/40"
                           checked={s.bulkSendEnabled !== false}
                           onChange={(e) => patchSmtpQuick.mutate({ id: s.id, data: { bulkSendEnabled: e.target.checked } })}
-                          disabled={patchSmtpQuick.isLoading}
+                          disabled={patchSmtpQuick.isLoading && patchSmtpQuick.variables?.id === s.id}
                         />
                         Use in campaigns
                       </label>
@@ -454,10 +454,10 @@ export default function SettingsPage() {
                         <button
                           type="button"
                           onClick={() => reactivateSmtp.mutate(s.id)}
-                          disabled={reactivateSmtp.isLoading}
+                          disabled={reactivateSmtp.isLoading && reactivateSmtp.variables === s.id}
                           className="tactical-btn-primary rounded text-sm disabled:opacity-50"
                         >
-                          {reactivateSmtp.isLoading ? 'Reactivating…' : 'Reactivate SMTP'}
+                          {reactivateSmtp.isLoading && reactivateSmtp.variables === s.id ? 'Reactivating…' : 'Reactivate SMTP'}
                         </button>
                       )}
                       <button
