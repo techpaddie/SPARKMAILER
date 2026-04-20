@@ -5,7 +5,7 @@ import { ScrollableListRegion } from '../components/ScrollableListRegion';
 import { SmtpDiagnosticsCallout } from '../components/SmtpDiagnosticsCallout';
 import { api, apiBaseURL } from '../services/api';
 import { useAuthStore } from '../context/authStore';
-import { classifySmtpError, type SmtpErrorMeta } from '../utils/smtpErrorDiagnostics';
+import type { SmtpErrorMeta } from '../utils/smtpErrorDiagnostics';
 
 type SmtpServerPublic = {
   id: string;

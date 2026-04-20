@@ -109,7 +109,7 @@ export function classifySmtpError(meta: SmtpErrorMeta): SmtpErrorDiagnostics {
   const lower = msg.toLowerCase();
   const respLower = (m.response || '').toLowerCase();
   const code = m.code ? m.code.toUpperCase() : null;
-  const smtpCode = m.responseCode;
+  const smtpCode: number | null = m.responseCode ?? null;
 
   const hints: string[] = [];
   let category: SmtpErrorCategory = 'unknown';
