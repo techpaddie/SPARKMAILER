@@ -1,6 +1,5 @@
 import 'dotenv/config';
 import { Worker, Job, UnrecoverableError } from 'bullmq';
-import nodemailer from 'nodemailer';
 import { env } from '../config';
 import { prisma } from '../utils/prisma';
 import { smtpRotationService, type SmtpConfig } from '../services/smtp-rotation.service';
@@ -9,6 +8,11 @@ import type { EmailJobData } from '../queue/email.queue';
 import { QUEUE_NAMES } from '../config/constants';
 import { licenseService } from '../services/license.service';
 import { buildProtectiveHeaders } from '../services/email-headers.service';
+import {
+  acquirePooledSmtpTransport,
+  invalidatePooledSmtpTransport,
+  startSmtpTransportIdleSweep,
+} from '../services/smtp-pooled-transport.service';
 
 const connection = {
   host: new URL(env.REDIS_URL).hostname,
@@ -51,9 +55,16 @@ function smtpResponseCode(err: unknown): number | null {
   return m ? parseInt(m[1]!, 10) : null;
 }
 
+/** Provider limits new SMTP AUTH attempts per client IP (burst of new connections triggers 450). */
+function isSmtpAuthCommandRateLimitError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return /too many auth commands/i.test(msg) || /\b450\b[\s\S]{0,80}auth commands/i.test(msg) || /4\.7\.1[\s\S]{0,40}too many auth/i.test(msg);
+}
+
 function isNonRetryableSmtpError(err: unknown): boolean {
   const msg = err instanceof Error ? err.message : String(err);
   const code = err && typeof err === 'object' && 'code' in err ? String((err as { code?: string }).code) : '';
+  if (isSmtpAuthCommandRateLimitError(err)) return false;
   if (code === 'EAUTH') return true;
   if (/535\b/.test(msg)) return true;
   if (/5\.7\.\d+/.test(msg)) return true;
@@ -81,6 +92,8 @@ function isRecipientRejectedError(err: unknown): boolean {
 function shouldFailoverToAlternateSmtp(err: unknown): boolean {
   if (isNonRetryableSmtpError(err)) return false;
   if (isRecipientRejectedError(err)) return false;
+  // Failover opens a new connection + AUTH each time; same egress IP makes “too many AUTH” worse.
+  if (isSmtpAuthCommandRateLimitError(err)) return false;
   return true;
 }
 
@@ -206,24 +219,7 @@ async function processEmailJob(job: Job<EmailJobData>) {
     try {
       await acquireSmtpMinuteSlot(smtp.id, smtp.maxSendsPerMinute);
 
-      const transporter = nodemailer.createTransport({
-        host: smtp.host,
-        port: smtp.port,
-        secure: smtp.secure,
-        pool: true,
-        maxConnections: 1,
-        maxMessages: 1,
-        auth: {
-          user: smtp.username,
-          pass: smtp.password,
-        },
-        tls: {
-          minVersion: 'TLSv1.2',
-        },
-        connectionTimeout: 20_000,
-        greetingTimeout: 20_000,
-        socketTimeout: 45_000,
-      });
+      const transporter = acquirePooledSmtpTransport(smtp);
 
       const startTime = Date.now();
       let info: { messageId?: string };
@@ -239,8 +235,11 @@ async function processEmailJob(job: Job<EmailJobData>) {
           messageId: protective.messageId,
           headers: protective.headers,
         });
-      } finally {
-        transporter.close();
+      } catch (sendErr) {
+        if (!isSmtpAuthCommandRateLimitError(sendErr)) {
+          invalidatePooledSmtpTransport(smtp.id);
+        }
+        throw sendErr;
       }
 
       await prisma.campaignRecipient.update({
@@ -363,4 +362,5 @@ worker.on('error', (err) => {
   console.error('[Worker] Error:', err);
 });
 
+startSmtpTransportIdleSweep();
 console.log('[Worker] Email worker started');
