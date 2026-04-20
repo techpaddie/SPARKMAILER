@@ -45,6 +45,11 @@ function LiveTimestamp() {
 
 type MeResponse = { name?: string; email?: string; quota?: { emailsUsed: number; maxEmailsPerDay: number; campaignsUsed: number; maxCampaignsPerDay: number }; license?: { status?: string; expiresAt?: string } };
 type CampaignItem = { id: string; name: string; status: string; sentCount: number; totalRecipients: number };
+
+function pollIntervalDashboardCampaigns(data: unknown): number {
+  if (!Array.isArray(data)) return 8000;
+  return (data as CampaignItem[]).some((c) => c.status === 'QUEUED' || c.status === 'SENDING') ? 2000 : 8000;
+}
 type SupportTicketSummary = { id: string; subject: string; status: string; lastMessageAt: string; latestMessage?: { authorType: string } | null };
 
 export default function DashboardPage() {
@@ -63,7 +68,7 @@ export default function DashboardPage() {
       const { data } = await api.get('/campaigns');
       return data;
     },
-    { refetchInterval: 5000, refetchOnWindowFocus: true }
+    { refetchInterval: pollIntervalDashboardCampaigns, refetchOnWindowFocus: true }
   );
 
   const activeCampaignCount = useMemo(

@@ -12,6 +12,19 @@ type CampaignMetadata = {
   attachments?: { filename: string; contentType: string; content?: string }[];
 };
 
+/** Campaign row from GET /campaigns (list). */
+type CampaignListItem = {
+  id: string;
+  name: string;
+  subject: string;
+  status: string;
+  sentCount: number;
+  totalRecipients: number;
+  failedCount?: number;
+  pendingCount?: number;
+  list?: { name: string };
+};
+
 type CampaignDetail = {
   id: string;
   name: string;
@@ -35,6 +48,24 @@ type CliLine = {
   text: string;
   type: 'cmd' | 'info' | 'ok' | 'warn' | 'error' | 'blank';
 };
+
+/** TanStack Query v4: refetchInterval fn receives (data, query). */
+function pollIntervalCampaignList(data: unknown): number | false {
+  if (!Array.isArray(data)) return false;
+  return data.some((c: { status: string }) => c.status === 'QUEUED' || c.status === 'SENDING') ? 1000 : false;
+}
+
+function pollIntervalCampaignDetail(data: unknown): number | false {
+  const d = data as CampaignDetail | undefined;
+  if (!d) return false;
+  return d.status === 'QUEUED' || d.status === 'SENDING' ? 1000 : false;
+}
+
+function pollIntervalCampaignCli(data: unknown): number | false {
+  const d = data as CampaignDetail | undefined;
+  if (!d) return false;
+  return d.status === 'QUEUED' || d.status === 'SENDING' ? 800 : false;
+}
 
 function formatCampaignDate(iso?: string | null) {
   if (!iso) return '—';
@@ -118,21 +149,27 @@ export default function CampaignsPage() {
 
   // ─── Queries ───────────────────────────────────────────────────────────────
 
+  const hasActiveCampaign = (c: { status: string }) => c.status === 'QUEUED' || c.status === 'SENDING';
+
+  const { data: campaigns = [], isLoading } = useQuery<CampaignListItem[]>(
+    ['campaigns'],
+    async () => {
+      const { data } = await api.get<CampaignListItem[]>('/campaigns');
+      return data;
+    },
+    { refetchInterval: pollIntervalCampaignList }
+  );
+
+  const hasRunningCampaign = useMemo(
+    () => Array.isArray(campaigns) && campaigns.some(hasActiveCampaign),
+    [campaigns]
+  );
+
   const { data: stats, isLoading: statsLoading, error: statsError } = useQuery(
     ['dashboard-stats'],
     () => api.get('/dashboard/stats').then((r) => r.data),
-    { refetchInterval: 5000, retry: 2, refetchOnWindowFocus: true }
+    { refetchInterval: hasRunningCampaign ? 2000 : 8000, retry: 2, refetchOnWindowFocus: true }
   );
-
-  const hasActiveCampaign = (c: { status: string }) => c.status === 'QUEUED' || c.status === 'SENDING';
-  const { data: campaigns = [], isLoading } = useQuery({
-    queryKey: ['campaigns'],
-    queryFn: async () => {
-      const { data } = await api.get('/campaigns');
-      return data;
-    },
-    refetchInterval: (data) => (data?.some(hasActiveCampaign) ? 2000 : false),
-  });
 
   const {
     data: campaignDetail,
@@ -145,10 +182,10 @@ export default function CampaignsPage() {
       return data;
     },
     enabled: !!viewCampaignId,
-    refetchInterval: (data) => (data && hasActiveCampaign(data) ? 2000 : false),
+    refetchInterval: pollIntervalCampaignDetail,
   });
 
-  // CLI progress — polls aggressively while the dialog is open and campaign is active
+  // CLI progress — polls while the dialog is open and campaign is active
   const { data: cliData } = useQuery<CampaignDetail>(
     ['campaign-cli', cliCampaignId],
     async () => {
@@ -157,8 +194,7 @@ export default function CampaignsPage() {
     },
     {
       enabled: !!cliCampaignId,
-      refetchInterval: (data) =>
-        data?.status === 'SENDING' || data?.status === 'QUEUED' ? 1500 : false,
+      refetchInterval: pollIntervalCampaignCli,
     }
   );
 
@@ -788,18 +824,7 @@ export default function CampaignsPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {paginatedCampaigns.map(
-                        (c: {
-                          id: string;
-                          name: string;
-                          subject: string;
-                          status: string;
-                          sentCount: number;
-                          totalRecipients: number;
-                          failedCount?: number;
-                          pendingCount?: number;
-                          list: { name: string };
-                        }) => (
+                      {paginatedCampaigns.map((c: CampaignListItem) => (
                           <tr key={c.id} className="border-b border-white/[0.06] hover:bg-white/[0.03] transition-colors">
                             <td className="py-4 px-4 align-top min-w-0">
                               <span className="font-medium text-neutral-100 truncate block min-w-0" title={c.name}>{c.name}</span>
@@ -823,8 +848,8 @@ export default function CampaignsPage() {
                                 {c.totalRecipients > 0 && (
                                   <div className="w-32 h-1.5 bg-surface-600 rounded-full overflow-hidden">
                                     <div
-                                      className={`h-full rounded-full transition-all duration-500 ${
-                                        c.status === 'SENDING' ? 'bg-cyan-400' : 'bg-emerald-500'
+                                      className={`h-full rounded-full ${
+                                        c.status === 'SENDING' ? 'bg-cyan-400 transition-[width] duration-300 ease-out' : 'bg-emerald-500 transition-all duration-500'
                                       }`}
                                       style={{ width: `${(c.sentCount / c.totalRecipients) * 100}%` }}
                                     />
@@ -883,8 +908,7 @@ export default function CampaignsPage() {
                               </div>
                             </td>
                           </tr>
-                        )
-                      )}
+                      ))}
                     </tbody>
                   </table>
                 </ScrollableListRegion>
@@ -996,10 +1020,10 @@ export default function CampaignsPage() {
                 </div>
                 <div className="h-1.5 bg-gray-800 rounded-full overflow-hidden">
                   <div
-                    className={`h-full rounded-full transition-all duration-700 ${
+                    className={`h-full rounded-full ${
                       cliData.status === 'FAILED' ? 'bg-red-500' :
                       cliData.status === 'PAUSED' ? 'bg-amber-500' :
-                      'bg-green-500'
+                      cliIsActive ? 'bg-green-500 transition-[width] duration-300 ease-out' : 'bg-green-500 transition-all duration-500'
                     }`}
                     style={{ width: `${cliProgressPct}%` }}
                   />

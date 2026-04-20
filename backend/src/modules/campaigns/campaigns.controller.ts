@@ -117,6 +117,7 @@ export async function list(req: AuthenticatedRequest, res: Response) {
     failedCount: countMap[c.id]?.FAILED ?? 0,
     pendingCount: countMap[c.id]?.PENDING ?? 0,
   }));
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
   res.json(withCounts);
 }
 
@@ -145,6 +146,7 @@ export async function getOne(req: AuthenticatedRequest, res: Response) {
   });
   const failedCount = byStatus.FAILED ?? 0;
   const pendingCount = byStatus.PENDING ?? 0;
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
   res.json({
     ...campaign,
     failedCount,
