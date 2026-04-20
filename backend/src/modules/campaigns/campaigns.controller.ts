@@ -2,6 +2,7 @@ import { Response } from 'express';
 import { z } from 'zod';
 import { prisma } from '../../utils/prisma';
 import { addEmailJob } from '../../queue/email.queue';
+import { smtpRotationService } from '../../services/smtp-rotation.service';
 import { licenseService } from '../../services/license.service';
 import type { AuthenticatedRequest } from '../../middleware/types';
 
@@ -171,18 +172,25 @@ export async function startCampaign(req: AuthenticatedRequest, res: Response) {
     return;
   }
 
-  const smtp = await prisma.smtpServer.findFirst({
-    where: { userId: req.user!.id, isActive: true },
-  });
-
-  if (!smtp) {
-    res.status(400).json({ error: 'No active SMTP server configured' });
+  const pool = await smtpRotationService.getBulkRotationPool(req.user!.id);
+  if (pool.length === 0) {
+    res.status(400).json({
+      error:
+        'No SMTP servers are available for campaign sending. Enable “Use in campaigns” on at least one server, ensure it is active, and health is above the threshold.',
+    });
     return;
   }
+  const primary = smtpRotationService.selectSmtp(pool);
+  if (!primary) {
+    res.status(400).json({ error: 'Could not select an SMTP server for this campaign.' });
+    return;
+  }
+  const peers = pool.filter((s) => s.fromEmail.toLowerCase() === primary.fromEmail.toLowerCase());
+  const useDistributedRotation = peers.length > 1;
 
   await prisma.campaign.update({
     where: { id },
-    data: { status: 'QUEUED', smtpServerId: smtp.id },
+    data: { status: 'QUEUED', smtpServerId: primary.id },
   });
 
   const recipients = await prisma.campaignRecipient.findMany({
@@ -195,7 +203,7 @@ export async function startCampaign(req: AuthenticatedRequest, res: Response) {
     (metadata?.htmlContent && metadata.htmlContent.trim()) ||
     campaign.template?.htmlContent ||
     '<p>No content</p>';
-  const replyTo = metadata?.replyTo?.trim() || smtp.fromEmail;
+  const replyTo = metadata?.replyTo?.trim() || primary.fromEmail;
   const attachments = metadata?.attachments?.length ? metadata.attachments : undefined;
 
   for (const r of recipients) {
@@ -206,10 +214,11 @@ export async function startCampaign(req: AuthenticatedRequest, res: Response) {
       email: r.contact.email,
       subject: campaign.subject,
       html,
-      fromEmail: smtp.fromEmail,
-      fromName: smtp.fromName ?? undefined,
+      fromEmail: primary.fromEmail,
+      fromName: primary.fromName ?? undefined,
       replyTo,
       userId: req.user!.id,
+      smtpServerId: useDistributedRotation ? undefined : primary.id,
       attachments,
     });
   }
@@ -267,14 +276,21 @@ export async function resumeCampaign(req: AuthenticatedRequest, res: Response) {
     return;
   }
 
-  const smtp = await prisma.smtpServer.findFirst({
-    where: { userId: req.user!.id, isActive: true },
-  });
-
-  if (!smtp) {
-    res.status(400).json({ error: 'No active SMTP server configured' });
+  const pool = await smtpRotationService.getBulkRotationPool(req.user!.id);
+  if (pool.length === 0) {
+    res.status(400).json({
+      error:
+        'No SMTP servers are available for campaign sending. Enable “Use in campaigns” on at least one server, ensure it is active, and health is above the threshold.',
+    });
     return;
   }
+  const primary = smtpRotationService.selectSmtp(pool);
+  if (!primary) {
+    res.status(400).json({ error: 'Could not select an SMTP server for this campaign.' });
+    return;
+  }
+  const peers = pool.filter((s) => s.fromEmail.toLowerCase() === primary.fromEmail.toLowerCase());
+  const useDistributedRotation = peers.length > 1;
 
   const recipients = await prisma.campaignRecipient.findMany({
     where: { campaignId: id, status: 'PENDING' },
@@ -286,7 +302,7 @@ export async function resumeCampaign(req: AuthenticatedRequest, res: Response) {
     (metadata?.htmlContent && metadata.htmlContent.trim()) ||
     campaign.template?.htmlContent ||
     '<p>No content</p>';
-  const replyTo = metadata?.replyTo?.trim() || smtp.fromEmail;
+  const replyTo = metadata?.replyTo?.trim() || primary.fromEmail;
   const attachments = metadata?.attachments?.length ? metadata.attachments : undefined;
 
   for (const r of recipients) {
@@ -297,17 +313,18 @@ export async function resumeCampaign(req: AuthenticatedRequest, res: Response) {
       email: r.contact.email,
       subject: campaign.subject,
       html,
-      fromEmail: smtp.fromEmail,
-      fromName: smtp.fromName ?? undefined,
+      fromEmail: primary.fromEmail,
+      fromName: primary.fromName ?? undefined,
       replyTo,
       userId: req.user!.id,
+      smtpServerId: useDistributedRotation ? undefined : primary.id,
       attachments,
     });
   }
 
   await prisma.campaign.update({
     where: { id },
-    data: { status: 'SENDING' },
+    data: { status: 'SENDING', smtpServerId: primary.id },
   });
 
   res.json({ success: true, queued: recipients.length });

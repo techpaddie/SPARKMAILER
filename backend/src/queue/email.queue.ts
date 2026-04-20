@@ -20,16 +20,19 @@ export interface EmailJobData {
   fromName?: string;
   replyTo?: string;
   userId: string;
+  /** When set, sends use this server (same as campaign start) instead of random rotation. */
+  smtpServerId?: string;
   attachments?: { filename: string; contentType: string; content: string }[];
 }
 
 export const emailQueue = new Queue<EmailJobData>(QUEUE_NAMES.EMAIL_SEND, {
   connection,
   defaultJobOptions: {
-    attempts: 3,
+    // Retrying the same SMTP login after 535/lockout often makes things worse; worker uses UnrecoverableError for auth failures.
+    attempts: 2,
     backoff: {
       type: 'exponential',
-      delay: 5000,
+      delay: 8000,
     },
     removeOnComplete: {
       age: 3600,

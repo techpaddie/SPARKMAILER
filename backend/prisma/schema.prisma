@@ -201,6 +201,8 @@ model SmtpServer {
   fromEmail       String
   fromName        String?
   isActive        Boolean   @default(true)
+  /// When false, server is skipped for campaign sends and rotation (tests and editing still allowed).
+  bulkSendEnabled Boolean   @default(true)
   healthScore     Float     @default(100)
   successCount    Int       @default(0)
   failureCount    Int       @default(0)

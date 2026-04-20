@@ -15,6 +15,8 @@ type SmtpServerItem = {
   fromName: string | null;
   healthScore: number;
   isActive: boolean;
+  /** When false, server is skipped for campaign sends and rotation (SMTP test still works). */
+  bulkSendEnabled?: boolean;
   weight: number;
   sendDelayMs: number;
   maxSendsPerMinute: number;
@@ -81,6 +83,9 @@ function SmtpDeliveryControlsRow({
           <span className={`text-xs px-2 py-0.5 rounded-full shrink-0 ${statusBadge.className}`}>{statusBadge.label}</span>
         </div>
         <p className="text-xs text-neutral-500 mt-1 font-mono truncate">{server.fromEmail}</p>
+        {server.bulkSendEnabled === false ? (
+          <p className="text-xs text-slate-400 mt-1">Excluded from campaign rotation (pacing still editable).</p>
+        ) : null}
       </td>
       <td className="py-3 px-2 align-top whitespace-nowrap text-sm text-neutral-400">{Math.round(server.healthScore)}%</td>
       <td className="py-3 px-2 align-top">
@@ -132,23 +137,30 @@ function SmtpDeliveryControlsRow({
 }
 
 function smtpStatusBadge(server: SmtpServerItem) {
-  if (server.isActive && server.healthScore >= 30) {
+  if (!server.isActive) {
+    return {
+      label: 'Inactive',
+      className: 'bg-red-500/15 text-red-300 border border-red-500/20',
+    };
+  }
+
+  if (server.bulkSendEnabled === false) {
+    return {
+      label: 'Excluded from sends',
+      className: 'bg-slate-500/15 text-slate-300 border border-slate-500/25',
+    };
+  }
+
+  if (server.healthScore >= 30) {
     return {
       label: 'Active',
       className: 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/20',
     };
   }
 
-  if (server.isActive) {
-    return {
-      label: 'Recovering',
-      className: 'bg-amber-500/15 text-amber-300 border border-amber-500/20',
-    };
-  }
-
   return {
-    label: 'Inactive',
-    className: 'bg-red-500/15 text-red-300 border border-red-500/20',
+    label: 'Recovering',
+    className: 'bg-amber-500/15 text-amber-300 border border-amber-500/20',
   };
 }
 
@@ -243,6 +255,16 @@ export default function SettingsPage() {
   const deleteSmtp = useMutation(
     (id: string) => api.delete(`/smtp-servers/${id}`),
     { onSuccess: () => { queryClient.invalidateQueries(['smtp-servers']); queryClient.invalidateQueries(['dashboard-stats']); } }
+  );
+
+  const patchSmtpQuick = useMutation(
+    ({ id, data }: { id: string; data: Record<string, unknown> }) => api.patch(`/smtp-servers/${id}`, data),
+    {
+      onSuccess: () => {
+        queryClient.invalidateQueries(['smtp-servers']);
+        queryClient.invalidateQueries(['dashboard-stats']);
+      },
+    }
   );
 
   const [deliverySaveError, setDeliverySaveError] = useState<{ id: string; message: string } | null>(null);
@@ -386,7 +408,7 @@ export default function SettingsPage() {
             <Icon name="dns" size={20} className="text-primary-500/80" /> SMTP configuration
           </h2>
           <p className="text-neutral-500 text-sm mb-4">
-            Add SMTP servers to send campaign emails. Passwords are stored encrypted.
+            Add SMTP servers to send campaign emails. Passwords are stored encrypted. Use <strong className="text-neutral-400 font-medium">Use in campaigns</strong> to exclude a server from rotation while keeping it available for SMTP tests.
           </p>
           {smtpLoading && <p className="text-neutral-500 text-sm">Loading...</p>}
           {Boolean(smtpLoadError) && !smtpLoading && (
@@ -416,6 +438,16 @@ export default function SettingsPage() {
                         <span>Health: {Math.round(s.healthScore)}%</span>
                         <span>User: {s.username}</span>
                       </div>
+                      <label className="mt-3 flex items-center gap-2 cursor-pointer text-sm text-neutral-300 font-sans select-none">
+                        <input
+                          type="checkbox"
+                          className="rounded border-white/20 bg-surface-700 text-primary-500 focus:ring-primary-500/40"
+                          checked={s.bulkSendEnabled !== false}
+                          onChange={(e) => patchSmtpQuick.mutate({ id: s.id, data: { bulkSendEnabled: e.target.checked } })}
+                          disabled={patchSmtpQuick.isLoading}
+                        />
+                        Use in campaigns
+                      </label>
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
                       {!s.isActive && (
@@ -649,9 +681,9 @@ export default function SettingsPage() {
                     <Icon name="sync_alt" size={22} className="text-primary-400" />
                   </div>
                   <div>
-                    <h3 className="font-semibold text-neutral-100 mb-1">SMTP rotation</h3>
+                    <h3 className="font-semibold text-neutral-100 mb-1">SMTP rotation &amp; failover</h3>
                     <p className="text-sm text-neutral-400 leading-relaxed">
-                      When you have multiple SMTP servers, SparkMailer rotates between them using your <strong className="text-neutral-300 font-medium">rotation weight</strong> and live health. Higher weight increases share of traffic when the server is healthy; unhealthy servers are chosen less often. Use the table below to add per-server delays and per-minute caps enforced by the sending worker.
+                      With multiple eligible servers sharing the same <strong className="text-neutral-300 font-medium">From</strong> address, sends are spread using <strong className="text-neutral-300 font-medium">weight</strong>, <strong className="text-neutral-300 font-medium">health</strong>, and idle time so one host is not hammered (helps avoid rate limits). On connection or temporary SMTP errors, the worker can <strong className="text-neutral-300 font-medium">fail over</strong> to another host before marking a recipient failed. Auth failures do not fail over (same credentials would usually fail everywhere). Uncheck <strong className="text-neutral-300 font-medium">Use in campaigns</strong> on the SMTP tab to exclude a server from rotation while still testing it.
                     </p>
                   </div>
                 </div>

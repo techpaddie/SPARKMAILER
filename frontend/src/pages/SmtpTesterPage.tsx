@@ -2,8 +2,10 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import Icon from '../components/Icon';
 import { ScrollableListRegion } from '../components/ScrollableListRegion';
+import { SmtpDiagnosticsCallout } from '../components/SmtpDiagnosticsCallout';
 import { api, apiBaseURL } from '../services/api';
 import { useAuthStore } from '../context/authStore';
+import { classifySmtpError, type SmtpErrorMeta } from '../utils/smtpErrorDiagnostics';
 
 type SmtpServerPublic = {
   id: string;
@@ -16,6 +18,7 @@ type SmtpServerPublic = {
   fromName: string | null;
   isActive: boolean;
   healthScore: number;
+  bulkSendEnabled?: boolean;
 };
 
 type LogEntry = {
@@ -23,8 +26,15 @@ type LogEntry = {
   level: 'info' | 'success' | 'warn' | 'error';
   step: string;
   message: string;
-  data?: unknown;
+  data?: { smtp?: Partial<SmtpErrorMeta> } | unknown;
 };
+
+function smtpMetaFromLogData(data: unknown): Partial<SmtpErrorMeta> | null {
+  if (!data || typeof data !== 'object') return null;
+  const smtp = (data as { smtp?: unknown }).smtp;
+  if (!smtp || typeof smtp !== 'object') return null;
+  return smtp as Partial<SmtpErrorMeta>;
+}
 
 function levelStyles(level: LogEntry['level']) {
   switch (level) {
@@ -209,7 +219,9 @@ export default function SmtpTesterPage() {
                     {!isLoading &&
                       servers.map((s) => (
                         <option key={s.id} value={s.id}>
-                          {s.name} — {s.host}:{s.port} {s.secure ? '(SSL)' : '(STARTTLS)'} {s.isActive ? '' : ' • inactive'}
+                          {s.name} — {s.host}:{s.port} {s.secure ? '(SSL)' : '(STARTTLS)'}
+                          {!s.isActive ? ' • inactive' : ''}
+                          {s.bulkSendEnabled === false ? ' • not in campaign rotation' : ''}
                         </option>
                       ))}
                   </select>
@@ -322,7 +334,12 @@ export default function SmtpTesterPage() {
                           <span className={`shrink-0 w-[86px] uppercase tracking-wider ${levelStyles(l.level)}`}>
                             {l.step}
                           </span>
-                          <span className="text-neutral-300 flex-1 min-w-0 break-words">{l.message}</span>
+                          <div className="text-neutral-300 flex-1 min-w-0 break-words">
+                            <span className="block">{l.message}</span>
+                            {l.level === 'error' && l.step === 'error' ? (
+                              <SmtpDiagnosticsCallout message={l.message} smtp={smtpMetaFromLogData(l.data)} />
+                            ) : null}
+                          </div>
                         </div>
                       ))}
                       <div ref={logEndRef} />

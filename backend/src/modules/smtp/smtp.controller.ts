@@ -7,6 +7,7 @@ import nodemailer from 'nodemailer';
 import { resolveTxt } from 'dns/promises';
 import { buildProtectiveHeaders } from '../../services/email-headers.service';
 import { smtpRotationService } from '../../services/smtp-rotation.service';
+import { extractNodemailerSmtpMeta } from '../../utils/nodemailer-error-meta';
 
 const createSchema = z.object({
   name: z.string().min(1),
@@ -20,6 +21,8 @@ const createSchema = z.object({
   weight: z.coerce.number().int().min(1).max(1000).optional(),
   sendDelayMs: z.coerce.number().int().min(0).max(120_000).optional(),
   maxSendsPerMinute: z.coerce.number().int().min(0).max(10_000).optional(),
+  /** When false, server is not used for campaigns or rotation (SMTP test still works). */
+  bulkSendEnabled: z.boolean().optional(),
 });
 
 const updateSchema = createSchema.partial();
@@ -38,6 +41,7 @@ function toPublic(server: {
   weight: number;
   sendDelayMs: number;
   maxSendsPerMinute: number;
+  bulkSendEnabled: boolean;
 }) {
   return {
     id: server.id,
@@ -53,6 +57,7 @@ function toPublic(server: {
     weight: server.weight,
     sendDelayMs: server.sendDelayMs,
     maxSendsPerMinute: server.maxSendsPerMinute,
+    bulkSendEnabled: server.bulkSendEnabled,
   };
 }
 
@@ -97,6 +102,7 @@ export async function create(req: AuthenticatedRequest, res: Response) {
       weight: parsed.data.weight ?? 10,
       sendDelayMs: parsed.data.sendDelayMs ?? 0,
       maxSendsPerMinute: parsed.data.maxSendsPerMinute ?? 0,
+      bulkSendEnabled: parsed.data.bulkSendEnabled ?? true,
     },
   });
   res.status(201).json(toPublic(server));
@@ -128,6 +134,7 @@ export async function update(req: AuthenticatedRequest, res: Response) {
     weight?: number;
     sendDelayMs?: number;
     maxSendsPerMinute?: number;
+    bulkSendEnabled?: boolean;
     passwordEnc?: string;
   } = { ...rest };
   if (password) {
@@ -317,11 +324,13 @@ export async function testStream(req: AuthenticatedRequest, res: Response) {
     res.end();
   } catch (err) {
     await smtpRotationService.recordFailure(smtp.id);
+    const smtpMeta = extractNodemailerSmtpMeta(err);
     writeLog(res, {
       ts: ts(),
       level: 'error',
       step: 'error',
-      message: err instanceof Error ? err.message : 'Unknown error',
+      message: smtpMeta.message,
+      data: { smtp: smtpMeta },
     });
     writeLog(res, { ts: ts(), level: 'warn', step: 'health', message: 'SMTP health score was reduced because this test failed.' });
     res.end();

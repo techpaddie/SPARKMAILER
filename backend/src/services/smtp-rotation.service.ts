@@ -14,56 +14,101 @@ export interface SmtpConfig {
   weight: number;
   sendDelayMs: number;
   maxSendsPerMinute: number;
+  lastUsedAt: Date | null;
 }
 
 const HEALTH_THRESHOLD = 30;
 const MIN_WEIGHT = 1;
 
-export const smtpRotationService = {
-  async getActiveSmtpForUser(userId: string): Promise<SmtpConfig[]> {
-    const servers = await prisma.smtpServer.findMany({
-      where: { userId, isActive: true },
-      orderBy: { healthScore: 'desc' },
-    });
+function mapServer(s: {
+  id: string;
+  host: string;
+  port: number;
+  secure: boolean;
+  username: string;
+  passwordEnc: string;
+  fromEmail: string;
+  fromName: string | null;
+  healthScore: number;
+  weight: number;
+  sendDelayMs: number | null;
+  maxSendsPerMinute: number | null;
+  lastUsedAt: Date | null;
+}): SmtpConfig {
+  const baseWeight = Math.max(MIN_WEIGHT, s.weight);
+  const healthFactor = Math.max(0, Math.min(100, s.healthScore)) / 100;
+  return {
+    id: s.id,
+    host: s.host,
+    port: s.port,
+    secure: s.secure,
+    username: s.username,
+    password: decrypt(s.passwordEnc),
+    fromEmail: s.fromEmail,
+    fromName: s.fromName,
+    healthScore: s.healthScore,
+    weight: Math.max(MIN_WEIGHT, Math.round(baseWeight * healthFactor)),
+    sendDelayMs: s.sendDelayMs ?? 0,
+    maxSendsPerMinute: s.maxSendsPerMinute ?? 0,
+    lastUsedAt: s.lastUsedAt,
+  };
+}
 
-    return servers
-      .filter((s) => s.healthScore >= HEALTH_THRESHOLD)
-      .map((s) => {
-        const baseWeight = Math.max(MIN_WEIGHT, s.weight);
-        const healthFactor = Math.max(0, Math.min(100, s.healthScore)) / 100;
-        return {
-          id: s.id,
-          host: s.host,
-          port: s.port,
-          secure: s.secure,
-          username: s.username,
-          password: decrypt(s.passwordEnc),
-          fromEmail: s.fromEmail,
-          fromName: s.fromName,
-          healthScore: s.healthScore,
-          weight: Math.max(MIN_WEIGHT, Math.round(baseWeight * healthFactor)),
-          sendDelayMs: s.sendDelayMs ?? 0,
-          maxSendsPerMinute: s.maxSendsPerMinute ?? 0,
-        };
-      });
+export const smtpRotationService = {
+  /**
+   * Server by id for campaign-bound jobs. Requires active + enabled for bulk (excluded servers are skipped so failover can run).
+   */
+  async getSmtpById(userId: string, id: string): Promise<SmtpConfig | null> {
+    const s = await prisma.smtpServer.findFirst({
+      where: { id, userId, isActive: true, bulkSendEnabled: true },
+    });
+    if (!s) return null;
+    return mapServer(s);
   },
 
   /**
-   * Weighted rotation - picks SMTP based on health score.
-   * Higher health = higher probability of selection.
+   * Healthy servers eligible for campaign rotation (respects user “exclude from campaigns”).
+   */
+  async getBulkRotationPool(userId: string): Promise<SmtpConfig[]> {
+    const servers = await prisma.smtpServer.findMany({
+      where: { userId, isActive: true, bulkSendEnabled: true },
+      orderBy: { healthScore: 'desc' },
+    });
+
+    return servers.filter((s) => s.healthScore >= HEALTH_THRESHOLD).map(mapServer);
+  },
+
+  /**
+   * @deprecated Use getBulkRotationPool — same behavior.
+   */
+  async getActiveSmtpForUser(userId: string): Promise<SmtpConfig[]> {
+    return smtpRotationService.getBulkRotationPool(userId);
+  },
+
+  /**
+   * Weighted pick with idle bias: servers idle longer get modestly higher weight to spread load and reduce rate limits.
    */
   selectSmtp(servers: SmtpConfig[]): SmtpConfig | null {
     if (servers.length === 0) return null;
     if (servers.length === 1) return servers[0]!;
 
-    const totalWeight = servers.reduce((sum, s) => sum + s.weight, 0);
+    const now = Date.now();
+    const adjusted = servers.map((s) => {
+      const last = s.lastUsedAt ? new Date(s.lastUsedAt).getTime() : 0;
+      const idleMin = Math.max(0, (now - last) / 60_000);
+      const idleBoost = 1 + Math.min(1.75, Math.log1p(idleMin));
+      const w = Math.max(1, s.weight) * idleBoost;
+      return { server: s, w };
+    });
+
+    const totalWeight = adjusted.reduce((sum, x) => sum + x.w, 0);
     let random = Math.random() * totalWeight;
 
-    for (const server of servers) {
-      random -= server.weight;
-      if (random <= 0) return server;
+    for (const x of adjusted) {
+      random -= x.w;
+      if (random <= 0) return x.server;
     }
-    return servers[servers.length - 1]!;
+    return adjusted[adjusted.length - 1]!.server;
   },
 
   async recordSuccess(smtpId: string, responseMs: number) {
@@ -78,7 +123,8 @@ export const smtpRotationService = {
         ? responseMs
         : Math.round((smtp.avgResponseMs * (total - 1) + responseMs) / total);
     const successRate = total > 0 ? (successCount / total) * 100 : 100;
-    const healthScore = Math.min(100, Math.max(0, successRate - avgResponseMs / 250));
+    const latencyPenalty = Math.min(25, Math.round(avgResponseMs / 400));
+    const healthScore = Math.min(100, Math.max(0, successRate - latencyPenalty));
 
     await prisma.smtpServer.update({
       where: { id: smtpId },
@@ -98,7 +144,6 @@ export const smtpRotationService = {
     if (!smtp) return;
 
     const failureCount = smtp.failureCount + 1;
-    const successCount = smtp.successCount;
     const penalty = Math.min(35, 12 + failureCount * 4);
     const healthScore = Math.max(0, smtp.healthScore - penalty);
 

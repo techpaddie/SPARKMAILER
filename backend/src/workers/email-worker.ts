@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { Worker, Job } from 'bullmq';
+import { Worker, Job, UnrecoverableError } from 'bullmq';
 import nodemailer from 'nodemailer';
 import { env } from '../config';
 import { prisma } from '../utils/prisma';
@@ -17,31 +17,94 @@ const connection = {
 };
 
 const BATCH_DELAY_MS = 1000 / (env.SEND_RATE_PER_SECOND || 10);
+const MAX_SMTP_FAILOVERS = Math.max(1, Math.min(8, env.SMTP_MAX_FAILOVERS_PER_JOB));
 
-function domainOf(email: string): string {
-  const at = email.lastIndexOf('@');
-  return at >= 0 ? email.slice(at + 1).toLowerCase() : '';
+/** Recipient rows in a terminal state count toward campaign completion. */
+const TERMINAL_RECIPIENT_STATUSES = ['SENT', 'FAILED', 'SKIPPED', 'BOUNCED'] as const;
+
+async function maybeCompleteCampaign(campaignId: string) {
+  const c = await prisma.campaign.findUnique({
+    where: { id: campaignId },
+    select: { totalRecipients: true, status: true },
+  });
+  if (!c || c.totalRecipients === 0) return;
+  if (c.status !== 'SENDING' && c.status !== 'QUEUED') return;
+
+  const doneCount = await prisma.campaignRecipient.count({
+    where: { campaignId, status: { in: [...TERMINAL_RECIPIENT_STATUSES] } },
+  });
+  if (doneCount >= c.totalRecipients) {
+    await prisma.campaign.update({
+      where: { id: campaignId },
+      data: { status: 'COMPLETED', completedAt: new Date() },
+    });
+  }
 }
 
-async function getSmtpForJob(userId: string, desiredFromEmail?: string): Promise<SmtpConfig | null> {
-  const all = await smtpRotationService.getActiveSmtpForUser(userId);
-  if (!desiredFromEmail) return smtpRotationService.selectSmtp(all);
+function smtpResponseCode(err: unknown): number | null {
+  if (err && typeof err === 'object' && 'responseCode' in err) {
+    const n = Number((err as { responseCode?: number }).responseCode);
+    return Number.isFinite(n) ? n : null;
+  }
+  const msg = err instanceof Error ? err.message : String(err);
+  const m = msg.match(/\b([45]\d{2})\b/);
+  return m ? parseInt(m[1]!, 10) : null;
+}
 
-  const exact = all.filter((c) => c.fromEmail.toLowerCase() === desiredFromEmail.toLowerCase());
-  if (exact.length > 0) return smtpRotationService.selectSmtp(exact);
+function isNonRetryableSmtpError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  const code = err && typeof err === 'object' && 'code' in err ? String((err as { code?: string }).code) : '';
+  if (code === 'EAUTH') return true;
+  if (/535\b/.test(msg)) return true;
+  if (/5\.7\.\d+/.test(msg)) return true;
+  if (/authentication failed|invalid login|not allowed to authenticate|badcredentials|username and password not accepted/i.test(msg)) {
+    return true;
+  }
+  if (/too many.*login|login.*rate limit|authentication.*rate|try again later/i.test(msg)) return true;
+  return false;
+}
 
-  const desiredDomain = domainOf(desiredFromEmail);
-  const domainMatch = desiredDomain ? all.filter((c) => domainOf(c.fromEmail) === desiredDomain) : [];
-  if (domainMatch.length > 0) return smtpRotationService.selectSmtp(domainMatch);
+function isRecipientRejectedError(err: unknown): boolean {
+  const c = smtpResponseCode(err);
+  const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
+  const code = err && typeof err === 'object' && 'code' in err ? String((err as { code?: string }).code) : '';
+  if (code === 'EENVELOPE') return true;
+  if (c === 550 || c === 551 || c === 553) {
+    if (/user unknown|no such user|mailbox unavailable|invalid recipient|address rejected|recipient address rejected/i.test(msg)) {
+      return true;
+    }
+  }
+  return false;
+}
 
-  return smtpRotationService.selectSmtp(all);
+/** Try another SMTP host only when another server might succeed (not auth or recipient policy). */
+function shouldFailoverToAlternateSmtp(err: unknown): boolean {
+  if (isNonRetryableSmtpError(err)) return false;
+  if (isRecipientRejectedError(err)) return false;
+  return true;
+}
+
+async function pickNextSmtpForJob(data: EmailJobData, exclude: Set<string>): Promise<SmtpConfig | null> {
+  const { userId, fromEmail, smtpServerId } = data;
+  const pool = await smtpRotationService.getBulkRotationPool(userId);
+  const want = fromEmail.toLowerCase();
+
+  if (smtpServerId && !exclude.has(smtpServerId)) {
+    const bound = await smtpRotationService.getSmtpById(userId, smtpServerId);
+    if (bound) return bound;
+  }
+
+  const sameFrom = pool.filter((s) => !exclude.has(s.id) && s.fromEmail.toLowerCase() === want);
+  const fallback = pool.filter((s) => !exclude.has(s.id));
+  const candidates = sameFrom.length > 0 ? sameFrom : fallback;
+  if (candidates.length === 0) return null;
+  return smtpRotationService.selectSmtp(candidates);
 }
 
 async function processEmailJob(job: Job<EmailJobData>) {
   const { campaignId, recipientId, email, subject, html, text, fromEmail, fromName, replyTo, userId, attachments } =
     job.data;
 
-  // Skip sending if the campaign has been paused or cancelled
   const campaign = await prisma.campaign.findUnique({
     where: { id: campaignId },
     select: { status: true },
@@ -51,7 +114,19 @@ async function processEmailJob(job: Job<EmailJobData>) {
     return { skipped: true };
   }
 
-  // Deliverability protection: never send to suppressed/unsubscribed recipients
+  const recipientRow = await prisma.campaignRecipient.findUnique({
+    where: { id: recipientId },
+    select: { status: true },
+  });
+  if (!recipientRow) {
+    await maybeCompleteCampaign(campaignId);
+    return { skipped: true };
+  }
+  if (recipientRow.status !== 'PENDING') {
+    await maybeCompleteCampaign(campaignId);
+    return { skipped: true };
+  }
+
   const suppressed =
     (await prisma.suppressionList.findFirst({ where: { userId, email } })) ||
     (await prisma.globalUnsubscribe.findUnique({ where: { email } }));
@@ -76,33 +151,9 @@ async function processEmailJob(job: Job<EmailJobData>) {
       },
     });
 
+    await maybeCompleteCampaign(campaignId);
     return { skipped: true, reason: 'suppressed' };
   }
-
-  const smtp = await getSmtpForJob(userId, fromEmail);
-  if (!smtp) {
-    throw new Error('No healthy SMTP server available');
-  }
-
-  await acquireSmtpMinuteSlot(smtp.id, smtp.maxSendsPerMinute);
-
-  const transporter = nodemailer.createTransport({
-    host: smtp.host,
-    port: smtp.port,
-    secure: smtp.secure,
-    auth: {
-      user: smtp.username,
-      pass: smtp.password,
-    },
-    tls: {
-      minVersion: 'TLSv1.2',
-    },
-    connectionTimeout: 20_000,
-    greetingTimeout: 20_000,
-    socketTimeout: 45_000,
-  });
-
-  const startTime = Date.now();
 
   const mailAttachments = attachments?.length
     ? attachments.map((a) => ({
@@ -112,113 +163,160 @@ async function processEmailJob(job: Job<EmailJobData>) {
       }))
     : undefined;
 
-  try {
-    const effectiveFromEmail = fromEmail;
-    const effectiveFromName = fromName ?? undefined;
+  const effectiveFromEmail = fromEmail;
+  const effectiveFromName = fromName ?? undefined;
 
-    // Ensure a text part exists (improves deliverability).
-    const textFallback =
-      (text && text.trim()) ||
-      html
-        .replace(/<style[\s\S]*?<\/style>/gi, ' ')
-        .replace(/<script[\s\S]*?<\/script>/gi, ' ')
-        .replace(/<[^>]+>/g, ' ')
-        .replace(/&nbsp;/gi, ' ')
-        .replace(/&amp;/gi, '&')
-        .replace(/&lt;/gi, '<')
-        .replace(/&gt;/gi, '>')
-        .replace(/\s+/g, ' ')
-        .trim() ||
-      undefined;
+  const textFallback =
+    (text && text.trim()) ||
+    html
+      .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+      .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/&nbsp;/gi, ' ')
+      .replace(/&amp;/gi, '&')
+      .replace(/&lt;/gi, '<')
+      .replace(/&gt;/gi, '>')
+      .replace(/\s+/g, ' ')
+      .trim() ||
+    undefined;
 
-    const protective = buildProtectiveHeaders({
-      userId,
-      campaignId,
-      recipientId,
-      recipientEmail: email,
-      fromEmail: effectiveFromEmail,
-      fromName: effectiveFromName,
-      replyTo: replyTo || effectiveFromEmail,
-    });
+  const protective = buildProtectiveHeaders({
+    userId,
+    campaignId,
+    recipientId,
+    recipientEmail: email,
+    fromEmail: effectiveFromEmail,
+    fromName: effectiveFromName,
+    replyTo: replyTo || effectiveFromEmail,
+  });
 
-    const info = await transporter.sendMail({
-      from: protective.from,
-      to: email,
-      subject,
-      html,
-      text: textFallback,
-      replyTo: protective.replyTo,
-      attachments: mailAttachments,
-      messageId: protective.messageId,
-      headers: protective.headers,
-    });
+  const triedSmtpIds = new Set<string>();
+  let smtpForFailure: SmtpConfig | null = null;
+  let lastErr: unknown = new Error('No SMTP attempt made');
 
-    await prisma.campaignRecipient.update({
-      where: { id: recipientId },
-      data: {
-        status: 'SENT',
-        sentAt: new Date(),
-        messageId: info.messageId,
-      },
-    });
+  for (let attempt = 0; attempt < MAX_SMTP_FAILOVERS; attempt++) {
+    const smtp = await pickNextSmtpForJob(job.data, triedSmtpIds);
+    if (!smtp) {
+      lastErr = new Error('No healthy SMTP server available for this campaign identity');
+      break;
+    }
+    triedSmtpIds.add(smtp.id);
+    smtpForFailure = smtp;
 
-    await prisma.emailEvent.create({
-      data: {
-        campaignId,
-        recipientId,
-        email,
-        domain: email.split('@')[1],
-        eventType: 'SENT',
-        messageId: info.messageId ?? undefined,
-      },
-    });
+    try {
+      await acquireSmtpMinuteSlot(smtp.id, smtp.maxSendsPerMinute);
 
-    const updated = await prisma.campaign.update({
-      where: { id: campaignId },
-      data: { sentCount: { increment: 1 } },
-    });
-    const total = updated.totalRecipients;
-    const doneCount = await prisma.campaignRecipient.count({
-      where: { campaignId, status: { in: ['SENT', 'FAILED'] } },
-    });
-    if (doneCount >= total) {
+      const transporter = nodemailer.createTransport({
+        host: smtp.host,
+        port: smtp.port,
+        secure: smtp.secure,
+        pool: true,
+        maxConnections: 1,
+        maxMessages: 1,
+        auth: {
+          user: smtp.username,
+          pass: smtp.password,
+        },
+        tls: {
+          minVersion: 'TLSv1.2',
+        },
+        connectionTimeout: 20_000,
+        greetingTimeout: 20_000,
+        socketTimeout: 45_000,
+      });
+
+      const startTime = Date.now();
+      let info: { messageId?: string };
+      try {
+        info = await transporter.sendMail({
+          from: protective.from,
+          to: email,
+          subject,
+          html,
+          text: textFallback,
+          replyTo: protective.replyTo,
+          attachments: mailAttachments,
+          messageId: protective.messageId,
+          headers: protective.headers,
+        });
+      } finally {
+        transporter.close();
+      }
+
+      await prisma.campaignRecipient.update({
+        where: { id: recipientId },
+        data: {
+          status: 'SENT',
+          sentAt: new Date(),
+          messageId: info.messageId,
+        },
+      });
+
+      await prisma.emailEvent.create({
+        data: {
+          campaignId,
+          recipientId,
+          email,
+          domain: email.split('@')[1],
+          eventType: 'SENT',
+          messageId: info.messageId ?? undefined,
+        },
+      });
+
       await prisma.campaign.update({
         where: { id: campaignId },
-        data: { status: 'COMPLETED', completedAt: new Date() },
+        data: { sentCount: { increment: 1 } },
       });
+
+      await maybeCompleteCampaign(campaignId);
+
+      await smtpRotationService.recordSuccess(smtp.id, Date.now() - startTime);
+      const user = await prisma.user.findUnique({ where: { id: userId } });
+      if (user?.licenseId) {
+        await licenseService.incrementEmailUsage(userId, user.licenseId, 1);
+      }
+
+      if (smtp.sendDelayMs > 0) {
+        await new Promise((r) => setTimeout(r, smtp.sendDelayMs));
+      }
+
+      return { success: true, messageId: info.messageId };
+    } catch (err) {
+      lastErr = err;
+      if (shouldFailoverToAlternateSmtp(err)) {
+        continue;
+      }
+      break;
+    }
+  }
+
+  const err = lastErr;
+  const maxAttempts = Math.max(1, Number(job.opts.attempts ?? 1));
+  const bullAttempt = job.attemptsMade ?? 1;
+  const permanent = isNonRetryableSmtpError(err);
+  const giveUp = permanent || bullAttempt >= maxAttempts;
+
+  if (giveUp) {
+    if (smtpForFailure) {
+      await smtpRotationService.recordFailure(smtpForFailure.id);
     }
 
-    await smtpRotationService.recordSuccess(smtp.id, Date.now() - startTime);
-    const user = await prisma.user.findUnique({ where: { id: userId } });
-    if (user?.licenseId) {
-      await licenseService.incrementEmailUsage(userId, user.licenseId, 1);
-    }
-
-    if (smtp.sendDelayMs > 0) {
-      await new Promise((r) => setTimeout(r, smtp.sendDelayMs));
-    }
-
-    return { success: true, messageId: info.messageId };
-  } catch (err) {
-    await smtpRotationService.recordFailure(smtp.id);
+    const errMsg = err instanceof Error ? err.message : String(err);
+    const triedList = [...triedSmtpIds];
+    const detailMsg =
+      triedList.length > 1
+        ? `${errMsg} (tried ${triedList.length} SMTP host(s); failover exhausted)`
+        : errMsg;
 
     await prisma.campaignRecipient.update({
       where: { id: recipientId },
       data: {
         status: 'FAILED',
-        error: err instanceof Error ? err.message : 'Unknown error',
+        error: detailMsg,
       },
     });
-    const total = (await prisma.campaign.findUnique({ where: { id: campaignId }, select: { totalRecipients: true } }))?.totalRecipients ?? 0;
-    const doneCount = await prisma.campaignRecipient.count({
-      where: { campaignId, status: { in: ['SENT', 'FAILED'] } },
-    });
-    if (total > 0 && doneCount >= total) {
-      await prisma.campaign.update({
-        where: { id: campaignId },
-        data: { status: 'COMPLETED', completedAt: new Date() },
-      });
-    }
+
+    await maybeCompleteCampaign(campaignId);
 
     await prisma.emailEvent.create({
       data: {
@@ -226,12 +324,19 @@ async function processEmailJob(job: Job<EmailJobData>) {
         recipientId,
         email,
         eventType: 'FAILED',
-        metadata: { error: err instanceof Error ? err.message : 'Unknown' },
+        metadata: {
+          error: errMsg,
+          smtpFailoverHosts: triedList.length > 1 ? triedList : undefined,
+        },
       },
     });
 
-    throw err;
+    if (permanent) {
+      throw new UnrecoverableError(errMsg);
+    }
   }
+
+  throw err instanceof Error ? err : new Error(String(err));
 }
 
 const worker = new Worker<EmailJobData>(
@@ -242,7 +347,7 @@ const worker = new Worker<EmailJobData>(
   },
   {
     connection,
-    concurrency: 5,
+    concurrency: Math.max(1, env.EMAIL_WORKER_CONCURRENCY),
   }
 );
 
