@@ -4,6 +4,7 @@ import { prisma } from '../../utils/prisma';
 import { addEmailJob } from '../../queue/email.queue';
 import { smtpRotationService } from '../../services/smtp-rotation.service';
 import { licenseService } from '../../services/license.service';
+import { publishCampaignTouch } from '../../realtime/publisher';
 import type { AuthenticatedRequest } from '../../middleware/types';
 
 const attachmentSchema = z.object({
@@ -234,6 +235,7 @@ export async function startCampaign(req: AuthenticatedRequest, res: Response) {
     await licenseService.incrementCampaignUsage(req.user!.id, req.user!.licenseId);
   }
 
+  publishCampaignTouch(req.user!.id, id);
   res.json({ success: true, queued: recipients.length });
 }
 
@@ -258,6 +260,7 @@ export async function pauseCampaign(req: AuthenticatedRequest, res: Response) {
     data: { status: 'PAUSED' },
   });
 
+  publishCampaignTouch(req.user!.id, id);
   res.json({ success: true });
 }
 
@@ -329,6 +332,7 @@ export async function resumeCampaign(req: AuthenticatedRequest, res: Response) {
     data: { status: 'SENDING', smtpServerId: primary.id },
   });
 
+  publishCampaignTouch(req.user!.id, id);
   res.json({ success: true, queued: recipients.length });
 }
 

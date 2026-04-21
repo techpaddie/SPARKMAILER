@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import http from 'http';
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -16,6 +17,8 @@ import dashboardRoutes from './modules/dashboard/dashboard.routes';
 import deliverabilityRoutes from './modules/deliverability/deliverability.routes';
 import unsubscribeRoutes from './modules/unsubscribe/unsubscribe.routes';
 import { mailgunBounceWebhook } from './modules/webhooks/webhooks.controller';
+import { attachWebSocketGateway, broadcastToUser } from './realtime/ws-gateway';
+import { startRealtimeRedisSubscriber } from './realtime/redis-subscriber';
 
 const app = express();
 
@@ -79,6 +82,13 @@ app.use((err: Error, _req: express.Request, res: express.Response, _next: expres
   res.status(500).json({ error: 'Internal server error' });
 });
 
-app.listen(env.PORT, () => {
+const server = http.createServer(app);
+attachWebSocketGateway(server);
+startRealtimeRedisSubscriber((userId, message) => {
+  broadcastToUser(userId, message);
+});
+
+server.listen(env.PORT, () => {
   console.log(`[API] Server running on port ${env.PORT}`);
+  console.log(`[API] WebSocket gateway at ws://localhost:${env.PORT}/ws`);
 });

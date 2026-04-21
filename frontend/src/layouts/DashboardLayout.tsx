@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { useCampaignRealtime } from '../hooks/useCampaignRealtime';
 import { useQuery } from '@tanstack/react-query';
 import { useAuthStore } from '../context/authStore';
 import SidebarNavLink from '../components/SidebarNavLink';
@@ -31,6 +32,8 @@ const navItems: { to: string; label: string; icon: string }[] = [
   { to: '/settings', label: 'Settings', icon: 'settings' },
 ];
 
+export type DashboardOutletContext = { realtimeConnected: boolean };
+
 export default function DashboardLayout() {
   const userAuth = useAuthStore((s) => s.userAuth);
   const user = userAuth?.user ?? null;
@@ -40,6 +43,7 @@ export default function DashboardLayout() {
   const location = useLocation();
   const restore = getImpersonationRestore();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const { connected: realtimeConnected } = useCampaignRealtime(!!userAuth?.accessToken);
 
   // Close mobile sidebar on route change
   useEffect(() => {
@@ -337,7 +341,7 @@ export default function DashboardLayout() {
 
         {/* Main content */}
         <main className="flex-1 overflow-auto min-w-0 bg-black bg-grid-subtle bg-grid">
-          <Outlet />
+          <Outlet context={{ realtimeConnected } satisfies DashboardOutletContext} />
         </main>
       </div>
     </div>

@@ -13,6 +13,7 @@ import {
   invalidatePooledSmtpTransport,
   startSmtpTransportIdleSweep,
 } from '../services/smtp-pooled-transport.service';
+import { publishCampaignTouch } from '../realtime/publisher';
 
 const connection = {
   host: new URL(env.REDIS_URL).hostname,
@@ -133,10 +134,12 @@ async function processEmailJob(job: Job<EmailJobData>) {
   });
   if (!recipientRow) {
     await maybeCompleteCampaign(campaignId);
+    publishCampaignTouch(userId, campaignId);
     return { skipped: true };
   }
   if (recipientRow.status !== 'PENDING') {
     await maybeCompleteCampaign(campaignId);
+    publishCampaignTouch(userId, campaignId);
     return { skipped: true };
   }
 
@@ -165,6 +168,7 @@ async function processEmailJob(job: Job<EmailJobData>) {
     });
 
     await maybeCompleteCampaign(campaignId);
+    publishCampaignTouch(userId, campaignId);
     return { skipped: true, reason: 'suppressed' };
   }
 
@@ -268,6 +272,7 @@ async function processEmailJob(job: Job<EmailJobData>) {
       });
 
       await maybeCompleteCampaign(campaignId);
+      publishCampaignTouch(userId, campaignId);
 
       await smtpRotationService.recordSuccess(smtp.id, Date.now() - startTime);
       const user = await prisma.user.findUnique({ where: { id: userId } });
@@ -316,6 +321,7 @@ async function processEmailJob(job: Job<EmailJobData>) {
     });
 
     await maybeCompleteCampaign(campaignId);
+    publishCampaignTouch(userId, campaignId);
 
     await prisma.emailEvent.create({
       data: {

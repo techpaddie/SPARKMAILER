@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useOutletContext } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../services/api';
 import Icon from '../components/Icon';
 import { ScrollableListRegion } from '../components/ScrollableListRegion';
+import type { DashboardOutletContext } from '../layouts/DashboardLayout';
 
 const CAMPAIGN_PAGE_SIZE = 50;
 
@@ -50,21 +52,18 @@ type CliLine = {
 };
 
 /** TanStack Query v4: refetchInterval fn receives (data, query). */
+const POLL_MS_LIST = 750;
+const POLL_MS_DETAIL = 500;
+
 function pollIntervalCampaignList(data: unknown): number | false {
   if (!Array.isArray(data)) return false;
-  return data.some((c: { status: string }) => c.status === 'QUEUED' || c.status === 'SENDING') ? 1000 : false;
+  return data.some((c: { status: string }) => c.status === 'QUEUED' || c.status === 'SENDING') ? POLL_MS_LIST : false;
 }
 
 function pollIntervalCampaignDetail(data: unknown): number | false {
   const d = data as CampaignDetail | undefined;
   if (!d) return false;
-  return d.status === 'QUEUED' || d.status === 'SENDING' ? 1000 : false;
-}
-
-function pollIntervalCampaignCli(data: unknown): number | false {
-  const d = data as CampaignDetail | undefined;
-  if (!d) return false;
-  return d.status === 'QUEUED' || d.status === 'SENDING' ? 800 : false;
+  return d.status === 'QUEUED' || d.status === 'SENDING' ? POLL_MS_DETAIL : false;
 }
 
 function formatCampaignDate(iso?: string | null) {
@@ -101,6 +100,9 @@ function cliTs() {
 
 export default function CampaignsPage() {
   const queryClient = useQueryClient();
+  const { realtimeConnected = false } = useOutletContext<DashboardOutletContext>() ?? {
+    realtimeConnected: false,
+  };
 
   // Create campaign state
   const [createOpen, setCreateOpen] = useState(false);
@@ -126,6 +128,7 @@ export default function CampaignsPage() {
   const [cliCampaignId, setCliCampaignId] = useState<string | null>(null);
   const [cliLines, setCliLines] = useState<CliLine[]>([]);
   const cliLastSentRef = useRef(-1);
+  const cliLastFailedRef = useRef(-1);
   const cliLastStatusRef = useRef('');
   const cliScrollRef = useRef<HTMLDivElement>(null);
 
@@ -151,13 +154,32 @@ export default function CampaignsPage() {
 
   const hasActiveCampaign = (c: { status: string }) => c.status === 'QUEUED' || c.status === 'SENDING';
 
+  const pollCampaignListInterval = useCallback(
+    (data: unknown) => {
+      if (realtimeConnected) return false;
+      return pollIntervalCampaignList(data);
+    },
+    [realtimeConnected]
+  );
+
+  const pollCampaignDetailInterval = useCallback(
+    (data: unknown) => {
+      if (realtimeConnected) return false;
+      return pollIntervalCampaignDetail(data);
+    },
+    [realtimeConnected]
+  );
+
   const { data: campaigns = [], isLoading } = useQuery<CampaignListItem[]>(
     ['campaigns'],
     async () => {
       const { data } = await api.get<CampaignListItem[]>('/campaigns');
       return data;
     },
-    { refetchInterval: pollIntervalCampaignList }
+    {
+      refetchInterval: pollCampaignListInterval,
+      refetchOnWindowFocus: true,
+    }
   );
 
   const hasRunningCampaign = useMemo(
@@ -168,7 +190,14 @@ export default function CampaignsPage() {
   const { data: stats, isLoading: statsLoading, error: statsError } = useQuery(
     ['dashboard-stats'],
     () => api.get('/dashboard/stats').then((r) => r.data),
-    { refetchInterval: hasRunningCampaign ? 2000 : 8000, retry: 2, refetchOnWindowFocus: true }
+    {
+      refetchInterval: () => {
+        if (realtimeConnected && hasRunningCampaign) return false;
+        return hasRunningCampaign ? 1500 : 8000;
+      },
+      retry: 2,
+      refetchOnWindowFocus: true,
+    }
   );
 
   const {
@@ -182,21 +211,21 @@ export default function CampaignsPage() {
       return data;
     },
     enabled: !!viewCampaignId,
-    refetchInterval: pollIntervalCampaignDetail,
+    refetchInterval: pollCampaignDetailInterval,
+    refetchOnWindowFocus: true,
   });
 
-  // CLI progress — polls while the dialog is open and campaign is active
-  const { data: cliData } = useQuery<CampaignDetail>(
-    ['campaign-cli', cliCampaignId],
-    async () => {
+  // Shares cache with the view modal when both reference the same campaign id
+  const { data: cliData } = useQuery<CampaignDetail>({
+    queryKey: ['campaign', cliCampaignId],
+    queryFn: async () => {
       const { data } = await api.get(`/campaigns/${cliCampaignId}`);
       return data;
     },
-    {
-      enabled: !!cliCampaignId,
-      refetchInterval: pollIntervalCampaignCli,
-    }
-  );
+    enabled: !!cliCampaignId,
+    refetchInterval: pollCampaignDetailInterval,
+    refetchOnWindowFocus: true,
+  });
 
   // Process incoming CLI data and append log lines
   useEffect(() => {
@@ -218,12 +247,35 @@ export default function CampaignsPage() {
     }
     cliLastSentRef.current = sentCount;
 
-    // Status transitions
-    if (status !== cliLastStatusRef.current) {
-      if (status === 'SENDING' && cliLastStatusRef.current === 'QUEUED') {
+    if (cliLastFailedRef.current >= 0 && failedCount > cliLastFailedRef.current) {
+      const fd = failedCount - cliLastFailedRef.current;
+      setCliLines((prev) => [
+        ...prev,
+        mkLine(
+          `[${cliTs()}] WARN  +${fd} failure(s)  │  ${failedCount} total failed  │  ${sentCount}/${totalRecipients} delivered`,
+          'warn'
+        ),
+      ]);
+    }
+    cliLastFailedRef.current = failedCount;
+
+    // Status transitions (refs use :DONE suffix after terminal states)
+    const prevStatus = cliLastStatusRef.current;
+    if (status !== prevStatus) {
+      if (status === 'QUEUED' && prevStatus === 'DRAFT') {
+        setCliLines((prev) => [
+          ...prev,
+          mkLine(`[${cliTs()}] INFO  Jobs queued — waiting for worker...`, 'info'),
+        ]);
+      } else if (status === 'SENDING' && prevStatus === 'QUEUED') {
         setCliLines((prev) => [
           ...prev,
           mkLine(`[${cliTs()}] INFO  Worker picked up jobs — sending in progress...`, 'info'),
+        ]);
+      } else if (status === 'SENDING' && prevStatus === 'DRAFT') {
+        setCliLines((prev) => [
+          ...prev,
+          mkLine(`[${cliTs()}] INFO  Worker pipeline active — sending to recipients...`, 'info'),
         ]);
       }
 
@@ -238,6 +290,7 @@ export default function CampaignsPage() {
           mkLine('sparkmailer@vps:~$ █', 'cmd'),
         ]);
         queryClient.invalidateQueries(['campaigns']);
+        queryClient.invalidateQueries(['dashboard-stats']);
         cliLastStatusRef.current = 'COMPLETED:DONE';
         return;
       }
@@ -251,6 +304,7 @@ export default function CampaignsPage() {
           mkLine('sparkmailer@vps:~$ █', 'cmd'),
         ]);
         queryClient.invalidateQueries(['campaigns']);
+        queryClient.invalidateQueries(['dashboard-stats']);
         cliLastStatusRef.current = `${status}:DONE`;
         return;
       }
@@ -264,19 +318,23 @@ export default function CampaignsPage() {
           mkLine('sparkmailer@vps:~$ █', 'cmd'),
         ]);
         queryClient.invalidateQueries(['campaigns']);
+        queryClient.invalidateQueries(['dashboard-stats']);
         cliLastStatusRef.current = 'PAUSED:DONE';
         return;
       }
 
-      cliLastStatusRef.current = status;
+      if (!cliLastStatusRef.current.endsWith(':DONE')) {
+        cliLastStatusRef.current = status;
+      }
     }
   }, [cliData, queryClient]);
 
   // Open the CLI dialog for a campaign, generating boot lines
   const openCliFor = useCallback(
-    (campaign: { id: string; name: string; subject: string; totalRecipients: number; sentCount: number; status: string }) => {
+    (campaign: CampaignListItem) => {
       _cliId = 0;
       cliLastSentRef.current = campaign.sentCount;
+      cliLastFailedRef.current = campaign.failedCount ?? 0;
       cliLastStatusRef.current = campaign.status;
       const now = cliTs();
       const boot: CliLine[] = [
@@ -305,11 +363,6 @@ export default function CampaignsPage() {
     },
     []
   );
-
-  useEffect(() => {
-    if (cliCampaignId) return;
-    queryClient.removeQueries({ queryKey: ['campaign-cli', null] });
-  }, [cliCampaignId, queryClient]);
 
   // Pagination
   useEffect(() => {
@@ -372,8 +425,8 @@ export default function CampaignsPage() {
     {
       onSuccess: (_, id) => {
         queryClient.invalidateQueries(['campaigns']);
+        queryClient.invalidateQueries(['dashboard-stats']);
         queryClient.invalidateQueries({ queryKey: ['campaign', id] });
-        queryClient.invalidateQueries({ queryKey: ['campaign-cli', id] });
         setStartingId(null);
       },
       onError: (err: { response?: { data?: { error?: string } } }) => {
@@ -390,8 +443,8 @@ export default function CampaignsPage() {
     {
       onSuccess: (_, id) => {
         queryClient.invalidateQueries(['campaigns']);
+        queryClient.invalidateQueries(['dashboard-stats']);
         queryClient.invalidateQueries({ queryKey: ['campaign', id] });
-        queryClient.invalidateQueries({ queryKey: ['campaign-cli', id] });
         setToast({ type: 'success', message: 'Campaign paused.' });
       },
       onError: (err: { response?: { data?: { error?: string } } }) => {
@@ -405,8 +458,8 @@ export default function CampaignsPage() {
     {
       onSuccess: (_, id) => {
         queryClient.invalidateQueries(['campaigns']);
+        queryClient.invalidateQueries(['dashboard-stats']);
         queryClient.invalidateQueries({ queryKey: ['campaign', id] });
-        queryClient.invalidateQueries({ queryKey: ['campaign-cli', id] });
         setToast({ type: 'success', message: 'Campaign resumed.' });
       },
       onError: (err: { response?: { data?: { error?: string } } }) => {
@@ -510,7 +563,7 @@ export default function CampaignsPage() {
   };
 
   const handleStartCampaign = useCallback(
-    (c: { id: string; name: string; subject: string; totalRecipients: number; sentCount: number; status: string }) => {
+    (c: CampaignListItem) => {
       setStartingId(c.id);
       openCliFor(c);
       startCampaign.mutate(c.id);
@@ -519,7 +572,7 @@ export default function CampaignsPage() {
   );
 
   const handleResumeCampaign = useCallback(
-    (c: { id: string; name: string; subject: string; totalRecipients: number; sentCount: number; status: string }) => {
+    (c: CampaignListItem) => {
       openCliFor(c);
       resumeCampaign.mutate(c.id);
     },
@@ -527,7 +580,7 @@ export default function CampaignsPage() {
   );
 
   const handleWatchProgress = useCallback(
-    (c: { id: string; name: string; subject: string; totalRecipients: number; sentCount: number; status: string }) => {
+    (c: CampaignListItem) => {
       openCliFor(c);
     },
     [openCliFor]
@@ -1206,6 +1259,7 @@ export default function CampaignsPage() {
                             totalRecipients: campaignDetail.totalRecipients,
                             sentCount: campaignDetail.sentCount,
                             status: campaignDetail.status,
+                            failedCount: campaignDetail.failedCount,
                           });
                         }}
                         className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded bg-cyan-700 hover:bg-cyan-600 text-white transition-colors"
