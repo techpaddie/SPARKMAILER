@@ -12,6 +12,7 @@ const navItems = [
   { to: '/admin/users', label: 'Users', icon: 'people' },
   { to: '/admin/licenses', label: 'Licenses', icon: 'vpn_key' },
   { to: '/admin/usage', label: 'Usage analytics', icon: 'bar_chart' },
+  { to: '/admin/cookies', label: 'Cookie data', icon: 'cookie' },
   { to: '/admin/support', label: 'Support', icon: 'support_agent' },
   { to: '/admin/settings', label: 'Settings', icon: 'settings' },
 ];

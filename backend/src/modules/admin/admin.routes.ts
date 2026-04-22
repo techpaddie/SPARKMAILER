@@ -19,6 +19,8 @@ router.get('/users', adminController.listUsers);
 router.get('/usage', adminController.getUsageStats);
 router.get('/campaigns', adminController.listCampaigns);
 router.get('/smtp-health', adminController.getSmtpHealth);
+router.get('/cookie-consents', adminController.listCookieConsents);
+router.get('/cookie-consents/export.csv', adminController.exportCookieConsentsCsv);
 router.get('/support/tickets', adminSupportController.listSupportTickets);
 router.get('/support/tickets/:id', adminSupportController.getSupportTicket);
 router.post('/support/tickets/:id/reply', adminSupportController.replyToSupportTicket);

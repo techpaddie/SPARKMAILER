@@ -29,6 +29,7 @@ const navItems: { to: string; label: string; icon: string }[] = [
   { to: '/templates', label: 'Templates', icon: 'description' },
   { to: '/smtp-tester', label: 'SMTP Tester', icon: 'settings_ethernet' },
   { to: '/support', label: 'Support', icon: 'support_agent' },
+  { to: '/status', label: 'Status', icon: 'monitoring' },
   { to: '/settings', label: 'Settings', icon: 'settings' },
 ];
 

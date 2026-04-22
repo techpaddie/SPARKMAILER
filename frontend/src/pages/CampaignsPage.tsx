@@ -156,7 +156,8 @@ export default function CampaignsPage() {
 
   const pollCampaignListInterval = useCallback(
     (data: unknown) => {
-      if (realtimeConnected) return false;
+      // WebSocket-first, with safety polling to avoid stale UI if push is delayed.
+      if (realtimeConnected) return 2500;
       return pollIntervalCampaignList(data);
     },
     [realtimeConnected]
@@ -164,10 +165,12 @@ export default function CampaignsPage() {
 
   const pollCampaignDetailInterval = useCallback(
     (data: unknown) => {
-      if (realtimeConnected) return false;
+      // Keep the campaign modals responsive even when WS events are delayed.
+      if (realtimeConnected && cliCampaignId) return 500;
+      if (realtimeConnected && viewCampaignId) return 1000;
       return pollIntervalCampaignDetail(data);
     },
-    [realtimeConnected]
+    [realtimeConnected, cliCampaignId, viewCampaignId]
   );
 
   const { data: campaigns = [], isLoading } = useQuery<CampaignListItem[]>(
@@ -192,7 +195,7 @@ export default function CampaignsPage() {
     () => api.get('/dashboard/stats').then((r) => r.data),
     {
       refetchInterval: () => {
-        if (realtimeConnected && hasRunningCampaign) return false;
+        if (realtimeConnected && hasRunningCampaign) return 3000;
         return hasRunningCampaign ? 1500 : 8000;
       },
       retry: 2,
@@ -1349,3 +1352,4 @@ export default function CampaignsPage() {
     </div>
   );
 }
+

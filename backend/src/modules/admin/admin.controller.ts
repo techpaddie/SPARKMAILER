@@ -276,6 +276,103 @@ export async function listUsers(req: AuthenticatedRequest, res: Response) {
   res.json(users);
 }
 
+export async function listCookieConsents(req: AuthenticatedRequest, res: Response) {
+  const limitRaw = Number(req.query.limit ?? 500);
+  const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 5000) : 500;
+  const records = await prisma.cookieConsent.findMany({
+    include: { user: { select: { email: true } } },
+    orderBy: { createdAt: 'desc' },
+    take: limit,
+  });
+  res.json(
+    records.map((r) => ({
+      id: r.id,
+      createdAt: r.createdAt,
+      updatedAt: r.updatedAt,
+      userId: r.userId,
+      userEmail: r.user?.email ?? null,
+      consentVersion: r.consentVersion,
+      necessary: r.necessary,
+      analytics: r.analytics,
+      marketing: r.marketing,
+      action: r.action,
+      source: r.source,
+      pageUrl: r.pageUrl,
+      referrer: r.referrer,
+      locale: r.locale,
+      timezone: r.timezone,
+      ip: r.ip,
+      userAgent: r.userAgent,
+      metadata: r.metadata,
+    }))
+  );
+}
+
+function csvCell(v: unknown): string {
+  if (v == null) return '';
+  const s = typeof v === 'string' ? v : JSON.stringify(v);
+  return `"${s.replace(/"/g, '""')}"`;
+}
+
+export async function exportCookieConsentsCsv(req: AuthenticatedRequest, res: Response) {
+  const records = await prisma.cookieConsent.findMany({
+    include: { user: { select: { email: true } } },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  const header = [
+    'id',
+    'createdAt',
+    'updatedAt',
+    'userId',
+    'userEmail',
+    'consentVersion',
+    'necessary',
+    'analytics',
+    'marketing',
+    'action',
+    'source',
+    'pageUrl',
+    'referrer',
+    'locale',
+    'timezone',
+    'ip',
+    'userAgent',
+    'metadata',
+  ];
+
+  const lines = [header.join(',')];
+  records.forEach((r) => {
+    const row = [
+      r.id,
+      r.createdAt.toISOString(),
+      r.updatedAt.toISOString(),
+      r.userId,
+      r.user?.email ?? '',
+      r.consentVersion,
+      r.necessary,
+      r.analytics,
+      r.marketing,
+      r.action,
+      r.source,
+      r.pageUrl,
+      r.referrer,
+      r.locale,
+      r.timezone,
+      r.ip,
+      r.userAgent,
+      r.metadata,
+    ];
+    lines.push(row.map(csvCell).join(','));
+  });
+
+  const csv = lines.join('\n');
+  const file = `cookie-consents-${new Date().toISOString().slice(0, 10)}.csv`;
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="${file}"`);
+  res.send(csv);
+}
+
 export async function suspendUser(req: AuthenticatedRequest, res: Response) {
   const { id } = req.params;
   await prisma.user.update({

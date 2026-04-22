@@ -25,6 +25,9 @@ import AdminUsagePage from './pages/admin/AdminUsagePage';
 import AdminSettingsPage from './pages/admin/AdminSettingsPage';
 import HomePage from './pages/HomePage';
 import ContactPage from './pages/ContactPage';
+import StatusPage from './pages/StatusPage';
+import CookieConsentManager from './components/CookieConsentManager';
+import AdminCookieDataPage from './pages/admin/AdminCookieDataPage';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const hasHydrated = useAuthStore((s) => s._hasHydrated);
@@ -86,10 +89,12 @@ export default function App() {
   return (
     <ToastProvider>
     <BrowserRouter>
+      <CookieConsentManager />
       <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route path="/activate" element={<ActivatePage />} />
         <Route path="/contact" element={<ContactPage />} />
+        <Route path="/status" element={<StatusPage />} />
         <Route path="/admin/login" element={<AdminLoginPage />} />
         <Route
           path="/"
@@ -125,6 +130,7 @@ export default function App() {
           <Route path="support" element={<AdminSupportPage />} />
           <Route path="licenses" element={<AdminLicensesPage />} />
           <Route path="usage" element={<AdminUsagePage />} />
+          <Route path="cookies" element={<AdminCookieDataPage />} />
           <Route path="settings" element={<AdminSettingsPage />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />

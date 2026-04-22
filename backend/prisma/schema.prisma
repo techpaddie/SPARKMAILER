@@ -36,6 +36,7 @@ model User {
   auditLogs       AuditLog[]
   usageLogs       UsageLog[]
   supportTickets  SupportTicket[]
+  cookieConsents  CookieConsent[]
 }
 
 enum UserRole {
@@ -433,4 +434,32 @@ model UsageLog {
   @@index([licenseId])
   @@index([date])
   @@index([userId, date])
+}
+
+// ============================================
+// COOKIE CONSENT DATA
+// ============================================
+
+model CookieConsent {
+  id                String   @id @default(uuid())
+  userId            String?
+  user              User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  consentVersion    String   @default("v1")
+  necessary         Boolean  @default(true)
+  analytics         Boolean  @default(false)
+  marketing         Boolean  @default(false)
+  action            String   // accept_all | reject_optional | custom_save | update
+  source            String   // banner | settings
+  pageUrl           String?
+  referrer          String?
+  locale            String?
+  timezone          String?
+  ip                String?
+  userAgent         String?
+  metadata          Json?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([userId])
+  @@index([createdAt])
 }
