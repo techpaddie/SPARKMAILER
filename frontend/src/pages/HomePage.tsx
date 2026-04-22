@@ -182,13 +182,6 @@ export default function HomePage() {
               >
                 Sign in
               </Link>
-              <Link
-                to="/status"
-                className="inline-flex items-center gap-2 px-6 py-3 rounded-lg border border-cyan-400/30 text-cyan-300 hover:bg-cyan-500/[0.08] transition-colors font-medium"
-              >
-                <Icon name="monitoring" size={18} />
-                System status
-              </Link>
             </div>
           </div>
         </div>

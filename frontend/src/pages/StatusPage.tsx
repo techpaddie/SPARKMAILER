@@ -5,33 +5,29 @@ import Icon from '../components/Icon';
 
 type PublicStatus = {
   generatedAt: string;
-  overall: 'operational' | 'degraded';
+  overall: 'operational' | 'degraded' | 'down';
+  appStatus: 'operational' | 'maintenance' | 'down';
+  maintenance: {
+    enabled: boolean;
+    message: string | null;
+    plannedStartAt: string | null;
+    plannedEndAt: string | null;
+    updatedAt: string | null;
+  };
   services: {
     api: { ok: boolean; uptimeSec: number };
     database: { ok: boolean; latencyMs: number | null };
     redis: { ok: boolean; latencyMs: number | null };
-    queue: {
-      ok: boolean;
-      waiting: number;
-      active: number;
-      completed: number;
-      failed: number;
-      pending: number;
-    };
   };
-  activity: {
-    campaigns: { active: number; total: number };
-    recipients: { pending: number; sent: number; failed: number };
-    eventsLastHour: {
-      sent: number;
-      delivered: number;
-      opened: number;
-      clicked: number;
-      bounced: number;
-      failed: number;
-      unsubscribed: number;
-      spam: number;
-    };
+  sendingCapabilities: {
+    smtpServersActive: number;
+    smtpServersHealthy: number;
+    ratePerSecond: number;
+    estimatedCapacityPerHour: number;
+    queuePending: number;
+    queueWaiting: number;
+    queueActive: number;
+    mailPipelineReady: boolean;
   };
 };
 
@@ -129,12 +125,12 @@ export default function StatusPage() {
         <header className="flex flex-wrap items-center justify-between gap-4">
           <div>
             <h1 className="font-heading text-3xl sm:text-4xl font-bold tracking-tight">SparkMailer Status</h1>
-            <p className="text-neutral-400 mt-2">Live, public service health and sending activity.</p>
+            <p className="text-neutral-400 mt-2">Live server, mail pipeline, and SMTP operations status.</p>
           </div>
           <div className="flex items-center gap-2 text-sm">
             <span className={`inline-flex items-center gap-2 px-3 py-1 rounded border ${overallOk ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400' : 'border-amber-500/30 bg-amber-500/10 text-amber-400'}`}>
               <Icon name="circle" size={10} />
-              {overallOk ? 'Operational' : 'Degraded'}
+              {status?.overall === 'down' ? 'Down' : overallOk ? 'Operational' : 'Degraded'}
             </span>
             <span className={`inline-flex items-center gap-2 px-3 py-1 rounded border ${liveConnected ? 'border-cyan-500/30 bg-cyan-500/10 text-cyan-400' : 'border-neutral-500/30 bg-surface-800 text-neutral-400'}`}>
               <Icon name="sync" size={14} />
@@ -160,16 +156,16 @@ export default function StatusPage() {
                 <p className="text-xl font-bold mt-1">{fmtUptime(status.services.api.uptimeSec)}</p>
               </div>
               <div className="tactical-card rounded-lg p-4">
-                <p className="text-neutral-500 text-sm">Queue pending</p>
-                <p className="text-xl font-bold mt-1">{status.services.queue.pending.toLocaleString()}</p>
+                <p className="text-neutral-500 text-sm">Overall app status</p>
+                <p className="text-xl font-bold mt-1 capitalize">{status.appStatus}</p>
               </div>
               <div className="tactical-card rounded-lg p-4">
-                <p className="text-neutral-500 text-sm">Active campaigns</p>
-                <p className="text-xl font-bold mt-1">{status.activity.campaigns.active.toLocaleString()}</p>
+                <p className="text-neutral-500 text-sm">SMTP capacity / hour</p>
+                <p className="text-xl font-bold mt-1">{status.sendingCapabilities.estimatedCapacityPerHour.toLocaleString()}</p>
               </div>
               <div className="tactical-card rounded-lg p-4">
-                <p className="text-neutral-500 text-sm">Events (last hour)</p>
-                <p className="text-xl font-bold mt-1">{status.activity.eventsLastHour.sent.toLocaleString()} sent</p>
+                <p className="text-neutral-500 text-sm">Maintenance mode</p>
+                <p className="text-xl font-bold mt-1">{status.maintenance.enabled ? 'Enabled' : 'Disabled'}</p>
               </div>
             </section>
 
@@ -179,30 +175,41 @@ export default function StatusPage() {
                 <div className="space-y-2 text-sm">
                   <p className={statusClass(status.services.api.ok)}>API: {status.services.api.ok ? 'online' : 'offline'}</p>
                   <p className={statusClass(status.services.database.ok)}>
-                    Database: {status.services.database.ok ? 'online' : 'degraded'} ({fmtLatency(status.services.database.latencyMs)})
+                    Database: {status.services.database.ok ? 'online' : 'down'} ({fmtLatency(status.services.database.latencyMs)})
                   </p>
                   <p className={statusClass(status.services.redis.ok)}>
-                    Redis: {status.services.redis.ok ? 'online' : 'degraded'} ({fmtLatency(status.services.redis.latencyMs)})
-                  </p>
-                  <p className={statusClass(status.services.queue.ok)}>
-                    Queue: {status.services.queue.ok ? 'operational' : 'degraded'}
-                    {' '}({status.services.queue.waiting} waiting, {status.services.queue.active} active, {status.services.queue.failed} failed)
+                    Redis: {status.services.redis.ok ? 'online' : 'down'} ({fmtLatency(status.services.redis.latencyMs)})
                   </p>
                 </div>
               </div>
 
               <div className="tactical-card rounded-lg p-5">
-                <h2 className="font-semibold text-lg mb-3">Delivery activity</h2>
+                <h2 className="font-semibold text-lg mb-3">Mail Infrastructure</h2>
                 <div className="grid grid-cols-2 gap-2 text-sm">
-                  <p className="text-neutral-300">Recipients pending: <span className="font-mono">{status.activity.recipients.pending}</span></p>
-                  <p className="text-neutral-300">Recipients sent: <span className="font-mono">{status.activity.recipients.sent}</span></p>
-                  <p className="text-neutral-300">Recipients failed: <span className="font-mono">{status.activity.recipients.failed}</span></p>
-                  <p className="text-neutral-300">Total campaigns: <span className="font-mono">{status.activity.campaigns.total}</span></p>
-                  <p className="text-neutral-300">Delivered: <span className="font-mono">{status.activity.eventsLastHour.delivered}</span></p>
-                  <p className="text-neutral-300">Opened: <span className="font-mono">{status.activity.eventsLastHour.opened}</span></p>
-                  <p className="text-neutral-300">Clicked: <span className="font-mono">{status.activity.eventsLastHour.clicked}</span></p>
-                  <p className="text-neutral-300">Bounced/failed: <span className="font-mono">{status.activity.eventsLastHour.bounced + status.activity.eventsLastHour.failed}</span></p>
+                  <p className="text-neutral-300 col-span-2">
+                    Mail pipeline: <span className={`font-semibold ${status.sendingCapabilities.mailPipelineReady ? 'text-emerald-400' : 'text-amber-400'}`}>
+                      {status.sendingCapabilities.mailPipelineReady ? 'Ready' : 'Degraded'}
+                    </span>
+                  </p>
+                  <p className="text-neutral-300">SMTP active: <span className="font-mono">{status.sendingCapabilities.smtpServersActive}</span></p>
+                  <p className="text-neutral-300">SMTP healthy: <span className="font-mono">{status.sendingCapabilities.smtpServersHealthy}</span></p>
+                  <p className="text-neutral-300">Send rate/sec: <span className="font-mono">{status.sendingCapabilities.ratePerSecond}</span></p>
+                  <p className="text-neutral-300">Queue pending: <span className="font-mono">{status.sendingCapabilities.queuePending}</span></p>
+                  <p className="text-neutral-300">Queue waiting: <span className="font-mono">{status.sendingCapabilities.queueWaiting}</span></p>
+                  <p className="text-neutral-300">Queue active: <span className="font-mono">{status.sendingCapabilities.queueActive}</span></p>
+                  <p className="text-neutral-300 col-span-2">Estimated capacity/hour: <span className="font-mono">{status.sendingCapabilities.estimatedCapacityPerHour.toLocaleString()}</span></p>
                 </div>
+              </div>
+            </section>
+
+            <section className="tactical-card rounded-lg p-5">
+              <h2 className="font-semibold text-lg mb-3">Maintenance status</h2>
+              <div className="space-y-2 text-sm text-neutral-300">
+                <p>Mode: <span className="font-medium">{status.maintenance.enabled ? 'Enabled' : 'Disabled'}</span></p>
+                {status.maintenance.message ? <p>Message: <span className="text-neutral-200">{status.maintenance.message}</span></p> : null}
+                {status.maintenance.plannedStartAt ? <p>Planned start: {new Date(status.maintenance.plannedStartAt).toLocaleString()}</p> : null}
+                {status.maintenance.plannedEndAt ? <p>Planned end: {new Date(status.maintenance.plannedEndAt).toLocaleString()}</p> : null}
+                {status.maintenance.updatedAt ? <p className="text-neutral-500">Last maintenance update: {new Date(status.maintenance.updatedAt).toLocaleString()}</p> : null}
               </div>
             </section>
           </>

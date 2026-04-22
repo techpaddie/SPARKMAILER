@@ -20,6 +20,14 @@ type SystemSmtpResponse = {
   config: SystemSmtpConfig | null;
 };
 
+type MaintenanceState = {
+  enabled: boolean;
+  message: string | null;
+  plannedStartAt: string | null;
+  plannedEndAt: string | null;
+  updatedAt: string | null;
+};
+
 const SYSTEM_CONTROLS = [
   {
     title: 'Create user & license',
@@ -64,6 +72,25 @@ export default function AdminSettingsPage() {
     ['admin-settings-smtp'],
     () => api.get<SystemSmtpResponse>('/admin/settings/smtp').then((r) => r.data)
   );
+  const { data: maintenance } = useQuery<MaintenanceState>(
+    ['admin-settings-maintenance'],
+    () => api.get('/admin/settings/maintenance').then((r) => r.data),
+    { refetchOnWindowFocus: true }
+  );
+
+  const updateMaintenance = useMutation(
+    (payload: {
+      enabled: boolean;
+      message?: string | null;
+      plannedStartAt?: string | null;
+      plannedEndAt?: string | null;
+    }) => api.put('/admin/settings/maintenance', payload),
+    {
+      onSuccess: () => {
+        queryClient.invalidateQueries(['admin-settings-maintenance']);
+      },
+    }
+  );
 
   const updateSmtp = useMutation(
     (payload: {
@@ -99,7 +126,15 @@ export default function AdminSettingsPage() {
   });
 
   const [saved, setSaved] = useState(false);
+  const [maintenanceSaved, setMaintenanceSaved] = useState(false);
   const error = (updateSmtp.error as { response?: { data?: { error?: string } } })?.response?.data?.error;
+  const maintenanceError = (updateMaintenance.error as { response?: { data?: { error?: string } } })?.response?.data?.error;
+  const [maintenanceForm, setMaintenanceForm] = useState({
+    enabled: false,
+    message: '',
+    plannedStartAt: '',
+    plannedEndAt: '',
+  });
 
   useEffect(() => {
     if (!data?.config) return;
@@ -115,6 +150,16 @@ export default function AdminSettingsPage() {
       isActive: c.isActive,
     }));
   }, [data?.configured, data?.config?.id]);
+
+  useEffect(() => {
+    if (!maintenance) return;
+    setMaintenanceForm({
+      enabled: maintenance.enabled,
+      message: maintenance.message ?? '',
+      plannedStartAt: maintenance.plannedStartAt ? maintenance.plannedStartAt.slice(0, 16) : '',
+      plannedEndAt: maintenance.plannedEndAt ? maintenance.plannedEndAt.slice(0, 16) : '',
+    });
+  }, [maintenance?.updatedAt]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -139,6 +184,23 @@ export default function AdminSettingsPage() {
         setForm((f) => ({ ...f, password: '' }));
       },
     });
+  };
+
+  const handleMaintenanceSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    setMaintenanceSaved(false);
+    updateMaintenance.reset();
+    updateMaintenance.mutate(
+      {
+        enabled: maintenanceForm.enabled,
+        message: maintenanceForm.message.trim() || null,
+        plannedStartAt: maintenanceForm.plannedStartAt ? new Date(maintenanceForm.plannedStartAt).toISOString() : null,
+        plannedEndAt: maintenanceForm.plannedEndAt ? new Date(maintenanceForm.plannedEndAt).toISOString() : null,
+      },
+      {
+        onSuccess: () => setMaintenanceSaved(true),
+      }
+    );
   };
 
   return (
@@ -179,6 +241,72 @@ export default function AdminSettingsPage() {
               </Link>
             ))}
           </div>
+        </section>
+
+        {/* Maintenance mode controls */}
+        <section className="mb-10">
+          <h2 className="font-heading font-semibold text-lg text-neutral-100 mb-1 flex items-center gap-2 tracking-tight">
+            <Icon name="build" size={22} className="text-amber-500/80" />
+            Maintenance mode
+          </h2>
+          <p className="text-neutral-500 text-sm mb-6">
+            Control the public maintenance status displayed on the status page.
+          </p>
+
+          <form onSubmit={handleMaintenanceSubmit} className="tactical-card rounded-xl p-6 border-t-2 border-t-amber-500/40">
+            <div className="space-y-4">
+              <label className="flex items-center gap-2 text-sm text-neutral-300">
+                <input
+                  type="checkbox"
+                  checked={maintenanceForm.enabled}
+                  onChange={(e) => setMaintenanceForm((f) => ({ ...f, enabled: e.target.checked }))}
+                  className="rounded border-white/20 bg-surface-700 text-amber-500 focus:ring-amber-500"
+                />
+                Enable maintenance mode
+              </label>
+
+              <div>
+                <label className="tactical-label mb-1.5 normal-case text-neutral-400">Public maintenance message (optional)</label>
+                <input
+                  type="text"
+                  value={maintenanceForm.message}
+                  onChange={(e) => setMaintenanceForm((f) => ({ ...f, message: e.target.value }))}
+                  className="tactical-input"
+                  placeholder="Scheduled maintenance in progress."
+                />
+              </div>
+
+              <div className="grid sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="tactical-label mb-1.5 normal-case text-neutral-400">Planned start (optional)</label>
+                  <input
+                    type="datetime-local"
+                    value={maintenanceForm.plannedStartAt}
+                    onChange={(e) => setMaintenanceForm((f) => ({ ...f, plannedStartAt: e.target.value }))}
+                    className="tactical-input"
+                  />
+                </div>
+                <div>
+                  <label className="tactical-label mb-1.5 normal-case text-neutral-400">Planned end (optional)</label>
+                  <input
+                    type="datetime-local"
+                    value={maintenanceForm.plannedEndAt}
+                    onChange={(e) => setMaintenanceForm((f) => ({ ...f, plannedEndAt: e.target.value }))}
+                    className="tactical-input"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {maintenanceError ? <p className="text-red-400 text-sm mt-4">{maintenanceError}</p> : null}
+            {maintenanceSaved ? <p className="text-emerald-400 text-sm mt-4 flex items-center gap-2"><Icon name="check_circle" size={18} /> Maintenance status saved.</p> : null}
+
+            <div className="mt-6">
+              <button type="submit" disabled={updateMaintenance.isLoading} className="tactical-btn-primary rounded-lg text-sm">
+                {updateMaintenance.isLoading ? 'Saving…' : 'Save maintenance status'}
+              </button>
+            </div>
+          </form>
         </section>
 
         {/* System SMTP configuration */}

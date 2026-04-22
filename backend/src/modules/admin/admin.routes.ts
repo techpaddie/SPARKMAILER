@@ -33,6 +33,8 @@ router.post('/users/:id/reset-password', adminController.resetUserPassword);
 
 router.get('/settings/smtp', adminController.getSystemSmtp);
 router.put('/settings/smtp', adminController.updateSystemSmtp);
+router.get('/settings/maintenance', adminController.getMaintenanceState);
+router.put('/settings/maintenance', adminController.updateMaintenanceState);
 
 router.post('/notify-user', adminController.notifyUser);
 

@@ -37,6 +37,7 @@ model User {
   usageLogs       UsageLog[]
   supportTickets  SupportTicket[]
   cookieConsents  CookieConsent[]
+  maintenanceUpdates MaintenanceState[]
 }
 
 enum UserRole {
@@ -462,4 +463,19 @@ model CookieConsent {
 
   @@index([userId])
   @@index([createdAt])
+}
+
+model MaintenanceState {
+  id                String   @id @default(uuid())
+  enabled           Boolean  @default(false)
+  message           String?
+  plannedStartAt    DateTime?
+  plannedEndAt      DateTime?
+  updatedByUserId   String?
+  updatedByUser     User?    @relation(fields: [updatedByUserId], references: [id], onDelete: SetNull)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([enabled])
+  @@index([updatedAt])
 }

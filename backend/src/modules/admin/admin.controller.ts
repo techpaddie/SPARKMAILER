@@ -515,6 +515,62 @@ const systemSmtpSchema = z.object({
   isActive: z.boolean().optional(),
 });
 
+const maintenanceStateSchema = z.object({
+  enabled: z.boolean(),
+  message: z.string().max(500).optional().nullable(),
+  plannedStartAt: z.string().datetime().optional().nullable(),
+  plannedEndAt: z.string().datetime().optional().nullable(),
+});
+
+export async function getMaintenanceState(req: AuthenticatedRequest, res: Response) {
+  const state = await prisma.maintenanceState.findFirst({
+    orderBy: { updatedAt: 'desc' },
+  });
+  res.json({
+    enabled: Boolean(state?.enabled),
+    message: state?.message ?? null,
+    plannedStartAt: state?.plannedStartAt ?? null,
+    plannedEndAt: state?.plannedEndAt ?? null,
+    updatedAt: state?.updatedAt ?? null,
+  });
+}
+
+export async function updateMaintenanceState(req: AuthenticatedRequest, res: Response) {
+  const parsed = maintenanceStateSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: formatZodError(parsed.error) });
+    return;
+  }
+
+  const data = parsed.data;
+  const updated = await prisma.maintenanceState.upsert({
+    where: { id: 'singleton-maintenance-state' },
+    create: {
+      id: 'singleton-maintenance-state',
+      enabled: data.enabled,
+      message: data.message ?? null,
+      plannedStartAt: data.plannedStartAt ? new Date(data.plannedStartAt) : null,
+      plannedEndAt: data.plannedEndAt ? new Date(data.plannedEndAt) : null,
+      updatedByUserId: req.user!.id,
+    },
+    update: {
+      enabled: data.enabled,
+      message: data.message ?? null,
+      plannedStartAt: data.plannedStartAt ? new Date(data.plannedStartAt) : null,
+      plannedEndAt: data.plannedEndAt ? new Date(data.plannedEndAt) : null,
+      updatedByUserId: req.user!.id,
+    },
+  });
+
+  res.json({
+    enabled: updated.enabled,
+    message: updated.message ?? null,
+    plannedStartAt: updated.plannedStartAt ?? null,
+    plannedEndAt: updated.plannedEndAt ?? null,
+    updatedAt: updated.updatedAt,
+  });
+}
+
 export async function updateSystemSmtp(req: AuthenticatedRequest, res: Response) {
   try {
     const parsed = systemSmtpSchema.safeParse(req.body);
