@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useCampaignRealtime } from '../hooks/useCampaignRealtime';
 import { useQuery } from '@tanstack/react-query';
@@ -34,6 +34,7 @@ const navItems: { to: string; label: string; icon: string }[] = [
 ];
 
 export type DashboardOutletContext = { realtimeConnected: boolean };
+const INACTIVITY_LOGOUT_MS = 45 * 60 * 1000;
 
 export default function DashboardLayout() {
   const userAuth = useAuthStore((s) => s.userAuth);
@@ -95,6 +96,54 @@ export default function DashboardLayout() {
   ).length;
   const supportBadge =
     (supportNewReplyCount > 0 ? supportNewReplyCount : supportOpenCount) || null;
+
+  const { data: campaignsForActivity = [] } = useQuery<{ status: string }[]>(
+    ['campaigns-inactivity-watch'],
+    () => api.get('/campaigns').then((r) => r.data),
+    { refetchInterval: 10000, refetchOnWindowFocus: true, retry: 1 }
+  );
+  const hasRunningCampaign = campaignsForActivity.some(
+    (c) => c.status === 'QUEUED' || c.status === 'SENDING'
+  );
+  const lastActivityRef = useRef(Date.now());
+
+  useEffect(() => {
+    const touch = () => {
+      lastActivityRef.current = Date.now();
+    };
+    const opts: AddEventListenerOptions = { passive: true };
+    window.addEventListener('mousemove', touch, opts);
+    window.addEventListener('mousedown', touch, opts);
+    window.addEventListener('keydown', touch);
+    window.addEventListener('scroll', touch, opts);
+    window.addEventListener('touchstart', touch, opts);
+
+    return () => {
+      window.removeEventListener('mousemove', touch);
+      window.removeEventListener('mousedown', touch);
+      window.removeEventListener('keydown', touch);
+      window.removeEventListener('scroll', touch);
+      window.removeEventListener('touchstart', touch);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!userAuth?.accessToken) return;
+    if (hasRunningCampaign) {
+      // Keep session alive while campaigns are actively sending.
+      lastActivityRef.current = Date.now();
+      return;
+    }
+
+    const id = window.setInterval(() => {
+      if (Date.now() - lastActivityRef.current >= INACTIVITY_LOGOUT_MS) {
+        logout('user');
+        navigate('/login', { replace: true });
+      }
+    }, 30000);
+
+    return () => window.clearInterval(id);
+  }, [hasRunningCampaign, logout, navigate, userAuth?.accessToken]);
 
   // Shared sidebar content
   const sidebarContent = (isMobile: boolean) => (

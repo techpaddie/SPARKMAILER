@@ -165,12 +165,22 @@ export default function CampaignsPage() {
 
   const pollCampaignDetailInterval = useCallback(
     (data: unknown) => {
-      // Keep the campaign modals responsive even when WS events are delayed.
-      if (realtimeConnected && cliCampaignId) return 500;
       if (realtimeConnected && viewCampaignId) return 1000;
       return pollIntervalCampaignDetail(data);
     },
-    [realtimeConnected, cliCampaignId, viewCampaignId]
+    [realtimeConnected, viewCampaignId]
+  );
+
+  const pollCampaignCliInterval = useCallback(
+    (data: unknown) => {
+      if (!cliCampaignId) return false;
+      const d = data as CampaignDetail | undefined;
+      if (startingId === cliCampaignId) return 500;
+      if (!d) return 500;
+      if (d.status === 'QUEUED' || d.status === 'SENDING' || d.status === 'PAUSED') return 500;
+      return realtimeConnected ? 1500 : false;
+    },
+    [cliCampaignId, startingId, realtimeConnected]
   );
 
   const { data: campaigns = [], isLoading } = useQuery<CampaignListItem[]>(
@@ -226,7 +236,7 @@ export default function CampaignsPage() {
       return data;
     },
     enabled: !!cliCampaignId,
-    refetchInterval: pollCampaignDetailInterval,
+    refetchInterval: pollCampaignCliInterval,
     refetchOnWindowFocus: true,
   });
 
@@ -262,8 +272,12 @@ export default function CampaignsPage() {
     }
     cliLastFailedRef.current = failedCount;
 
-    // Status transitions (refs use :DONE suffix after terminal states)
-    const prevStatus = cliLastStatusRef.current;
+    // Status transitions (refs may use :DONE suffix after terminal states)
+    const prevStatusRaw = cliLastStatusRef.current;
+    const prevStatus = prevStatusRaw.replace(/:DONE$/, '');
+    if (prevStatusRaw.endsWith(':DONE') && status !== prevStatus) {
+      cliLastStatusRef.current = prevStatus;
+    }
     if (status !== prevStatus) {
       if (status === 'QUEUED' && prevStatus === 'DRAFT') {
         setCliLines((prev) => [
@@ -282,7 +296,7 @@ export default function CampaignsPage() {
         ]);
       }
 
-      if (status === 'COMPLETED' && !cliLastStatusRef.current.endsWith(':DONE')) {
+      if (status === 'COMPLETED' && !prevStatusRaw.endsWith(':DONE')) {
         setCliLines((prev) => [
           ...prev,
           mkLine('', 'blank'),
@@ -298,7 +312,7 @@ export default function CampaignsPage() {
         return;
       }
 
-      if ((status === 'FAILED' || status === 'CANCELLED') && !cliLastStatusRef.current.endsWith(':DONE')) {
+      if ((status === 'FAILED' || status === 'CANCELLED') && !prevStatusRaw.endsWith(':DONE')) {
         setCliLines((prev) => [
           ...prev,
           mkLine('', 'blank'),
@@ -312,7 +326,7 @@ export default function CampaignsPage() {
         return;
       }
 
-      if (status === 'PAUSED' && !cliLastStatusRef.current.endsWith(':DONE')) {
+      if (status === 'PAUSED' && !prevStatusRaw.endsWith(':DONE')) {
         setCliLines((prev) => [
           ...prev,
           mkLine('', 'blank'),
@@ -326,9 +340,7 @@ export default function CampaignsPage() {
         return;
       }
 
-      if (!cliLastStatusRef.current.endsWith(':DONE')) {
-        cliLastStatusRef.current = status;
-      }
+      cliLastStatusRef.current = status;
     }
   }, [cliData, queryClient]);
 
@@ -569,17 +581,19 @@ export default function CampaignsPage() {
     (c: CampaignListItem) => {
       setStartingId(c.id);
       openCliFor(c);
+      void queryClient.invalidateQueries({ queryKey: ['campaign', c.id] });
       startCampaign.mutate(c.id);
     },
-    [openCliFor, startCampaign]
+    [openCliFor, queryClient, startCampaign]
   );
 
   const handleResumeCampaign = useCallback(
     (c: CampaignListItem) => {
       openCliFor(c);
+      void queryClient.invalidateQueries({ queryKey: ['campaign', c.id] });
       resumeCampaign.mutate(c.id);
     },
-    [openCliFor, resumeCampaign]
+    [openCliFor, queryClient, resumeCampaign]
   );
 
   const handleWatchProgress = useCallback(
@@ -1017,6 +1031,18 @@ export default function CampaignsPage() {
                     className="text-amber-400 hover:text-amber-300 text-xs font-mono px-2 py-1 border border-amber-500/30 rounded transition-colors disabled:opacity-50"
                   >
                     [PAUSE]
+                  </button>
+                )}
+                {cliData?.status === 'PAUSED' && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      resumeCampaign.mutate(cliCampaignId)
+                    }
+                    disabled={resumeCampaign.isLoading}
+                    className="text-emerald-400 hover:text-emerald-300 text-xs font-mono px-2 py-1 border border-emerald-500/30 rounded transition-colors disabled:opacity-50"
+                  >
+                    [RESUME]
                   </button>
                 )}
                 <button

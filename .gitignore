@@ -22,3 +22,5 @@ Thumbs.db
 
 # Vite
 frontend/dist/
+.vercel
+.env*.local
