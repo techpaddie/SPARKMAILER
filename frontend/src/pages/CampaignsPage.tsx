@@ -177,8 +177,11 @@ export default function CampaignsPage() {
       const d = data as CampaignDetail | undefined;
       if (startingId === cliCampaignId) return 500;
       if (!d) return 500;
-      if (d.status === 'QUEUED' || d.status === 'SENDING' || d.status === 'PAUSED') return 500;
-      return realtimeConnected ? 1500 : false;
+      // Keep polling while modal is open so first status transitions show instantly.
+      if (d.status === 'COMPLETED' || d.status === 'FAILED' || d.status === 'CANCELLED') {
+        return realtimeConnected ? 1500 : false;
+      }
+      return 500;
     },
     [cliCampaignId, startingId, realtimeConnected]
   );
@@ -237,6 +240,7 @@ export default function CampaignsPage() {
     },
     enabled: !!cliCampaignId,
     refetchInterval: pollCampaignCliInterval,
+    refetchIntervalInBackground: true,
     refetchOnWindowFocus: true,
   });
 
@@ -439,6 +443,9 @@ export default function CampaignsPage() {
     (id: string) => api.post(`/campaigns/${id}/start`),
     {
       onSuccess: (_, id) => {
+        queryClient.setQueryData<CampaignDetail | undefined>(['campaign', id], (prev) =>
+          prev ? { ...prev, status: 'QUEUED' } : prev
+        );
         queryClient.invalidateQueries(['campaigns']);
         queryClient.invalidateQueries(['dashboard-stats']);
         queryClient.invalidateQueries({ queryKey: ['campaign', id] });
@@ -457,6 +464,9 @@ export default function CampaignsPage() {
     (id: string) => api.post(`/campaigns/${id}/pause`),
     {
       onSuccess: (_, id) => {
+        queryClient.setQueryData<CampaignDetail | undefined>(['campaign', id], (prev) =>
+          prev ? { ...prev, status: 'PAUSED' } : prev
+        );
         queryClient.invalidateQueries(['campaigns']);
         queryClient.invalidateQueries(['dashboard-stats']);
         queryClient.invalidateQueries({ queryKey: ['campaign', id] });
@@ -472,6 +482,9 @@ export default function CampaignsPage() {
     (id: string) => api.post(`/campaigns/${id}/resume`),
     {
       onSuccess: (_, id) => {
+        queryClient.setQueryData<CampaignDetail | undefined>(['campaign', id], (prev) =>
+          prev ? { ...prev, status: 'QUEUED' } : prev
+        );
         queryClient.invalidateQueries(['campaigns']);
         queryClient.invalidateQueries(['dashboard-stats']);
         queryClient.invalidateQueries({ queryKey: ['campaign', id] });
